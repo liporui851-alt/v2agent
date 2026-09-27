@@ -1,6 +1,6 @@
 -- ============================================================
--- AI Agent — Ultra Edition
--- 推理等级 + Token 限制 + 全套动画 + 全新 UI
+-- AI Agent — Fold Edition
+-- 折叠胶囊 + 展开面板 + 推理等级 + Token 限制
 -- ============================================================
 
 local HttpService = game:GetService("HttpService")
@@ -14,19 +14,15 @@ local PG = LP:WaitForChild("PlayerGui")
 
 local VALID_KEY = "917867"
 
--- ============================================================
--- 配置
--- ============================================================
 local CONFIG = {
     API_URL     = "https://api.deepseek.com/chat/completions",
     API_KEY     = "",
     MODEL       = "deepseek-flash",
     TEMPERATURE = 0.3,
     MAX_LOOPS   = 15,
-    -- Token 限制
     TOKEN_LIMIT_ENABLED = false,
-    TOKEN_LIMIT         = 8000,   -- 上下文总 token 上限
-    TOKEN_PER_REPLY     = 2000,   -- 单次回复最大 token
+    TOKEN_LIMIT         = 8000,
+    TOKEN_PER_REPLY     = 2000,
 }
 
 local MODELS = {
@@ -34,107 +30,46 @@ local MODELS = {
     { name = "deepseek-v4-pro", desc = "V4 Pro" },
 }
 
--- ============================================================
--- 推理等级（通过提示词模拟）
--- ============================================================
 local REASONING_LEVELS = {
-    { id = "low",      name = "低",     desc = "快速直答",   extra = "" },
-    { id = "medium",   name = "中",     desc = "常规推理",   extra = "" },
-    { id = "high",     name = "高",     desc = "深度思考",   extra = "" },
-    { id = "extreme",  name = "极高",   desc = "多步验证",   extra = "" },
-    { id = "supreme",  name = "顶级",   desc = "穷尽推理",   extra = "" },
+    { id = "low",     name = "低",   desc = "快速直答" },
+    { id = "medium",  name = "中",   desc = "常规推理" },
+    { id = "high",    name = "高",   desc = "深度思考" },
+    { id = "extreme", name = "极高", desc = "多步验证" },
+    { id = "supreme", name = "顶级", desc = "穷尽推理" },
 }
 
 local BASE_PROMPT = [[
-你是 Roblox Luau Agent，运行在执行器环境。你的唯一目标是：用最少的步骤，把用户交代的事做完。
+你是 Roblox Luau Agent。用最少步骤完成任务。
 
-【工具】
+工具：
 ▶ run_code   {"code": "完整 Luau"}
 ▶ read_file  {"path": "路径"}
 ▶ write_file {"path": "路径", "content": "内容"}
-▶ search_file {"keyword": "关键词", "root": "."}
+▶ search_file {"keyword": "关键词"}
 ▶ list_dir   {"path": "路径"}
 
-【调用格式】
+调用格式：
 TOOL: 工具名
 ARGS: {"参数": "值"}
 END
 
-【提取代码】
-用户说"提取脚本"、"给我代码"时，输出：
-START
-<代码>
-END
+提取代码用 START/END 包裹。
 ]]
 
--- 各等级追加的规则
 local LEVEL_RULES = {
-    low = [[
-
-【等级：低】
-- 直接给答案，不要思考，不要解释。
-- 一次工具调用能解决就不要第二次。
-- 简单任务优先一次性输出。
-]],
-
-    medium = [[
-
-【等级：中】
-- 先判断任务类型，再决定是否调工具。
-- 复杂任务拆成 2-3 步完成，每步验证结果。
-- 报错时看错误信息再改，不要重复提交。
-]],
-
-    high = [[
-
-【等级：高】
-- 收到任务先在心里拆解：目标是什么、需要几步、每步输入输出是什么。
-- 每次工具调用前确认参数完整，避免缺字段。
-- 报错后分析根因，不要盲目重试。
-- 完成后用一句话总结做了什么。
-- 不要输出思考过程，直接执行。
-]],
-
-    extreme = [[
-
-【等级：极高】
-- 收到任务后先在心里做完整规划：识别目标、拆解子任务、确定依赖顺序、预估风险点。
-- 每一步执行前检查前置条件是否满足（角色存在、UI 已创建、变量已定义等）。
-- 每次工具调用后验证返回结果是否符合预期，不符合立即修正。
-- 报错时先定位错误类型（语法/运行时/逻辑），再针对性修复。
-- 涉及多次修改的，确保每次修改不破坏已有结构。
-- 完成后用一句话总结，不要展开。
-- 不要输出思考过程。
-]],
-
-    supreme = [[
-
-【等级：顶级】
-- 收到任务后在心里执行完整推理链：
-  1. 识别用户真实意图（表面需求 vs 潜在需求）
-  2. 评估任务复杂度与风险等级
-  3. 设计最优执行路径（考虑最少步骤、最小副作用）
-  4. 预判可能的失败点并准备回退方案
-- 每一步执行前做前置校验，执行后做结果校验。
-- 涉及 UI/角色/物理操作时，主动加边界检查（nil 检查、类型检查、超时保护）。
-- 报错时执行根因分析，不要盲目重试。同一个错误不要犯两次。
-- 涉及多步骤任务时，保持中间状态一致性。
-- 完成后用一句话总结关键动作，不要展开。
-- 不要输出任何思考过程，直接给工具调用或最终结果。
-- 任何时候不确定就选择更保守的方案。
-]],
+    low = "\n【等级：低】直接给答案，不解释，不调多余工具。",
+    medium = "\n【等级：中】判断任务类型，复杂任务拆 2-3 步，报错看信息再改。",
+    high = "\n【等级：高】拆解目标，确认参数，报错分析根因。完成后一句话总结。",
+    extreme = "\n【等级：极高】完整规划，前置校验，结果校验，根因分析。完成后一句话总结。",
+    supreme = "\n【等级：顶级】识别真实意图，评估风险，设计最优路径，预判失败点。每步前置+后置校验。保守优先。完成后一句话总结。",
 }
 
--- 当前等级
-local currentLevel = 2  -- 默认"中"
+local currentLevel = 2
 
 local function buildSystemPrompt()
     return BASE_PROMPT .. LEVEL_RULES[REASONING_LEVELS[currentLevel].id]
 end
 
--- ============================================================
--- Token 估算（粗略，约 4 字符 = 1 token）
--- ============================================================
 local function estimateTokens(text)
     if not text then return 0 end
     return math.ceil(#text / 4)
@@ -149,51 +84,44 @@ local function estimateMessagesTokens(messages)
 end
 
 -- ============================================================
--- 配色
+-- 配色（参考你截图那个浅紫风）
 -- ============================================================
 local C = {
-    bg        = Color3.fromRGB(6, 7, 11),
-    bgGlass   = Color3.fromRGB(12, 14, 20),
-    surface   = Color3.fromRGB(18, 20, 28),
-    surface2  = Color3.fromRGB(26, 29, 38),
-    surface3  = Color3.fromRGB(36, 40, 52),
-    border    = Color3.fromRGB(52, 58, 74),
-    text      = Color3.fromRGB(245, 247, 252),
-    dim       = Color3.fromRGB(150, 158, 175),
-    dim2      = Color3.fromRGB(90, 98, 118),
-    accent    = Color3.fromRGB(130, 170, 255),
-    accent2   = Color3.fromRGB(180, 140, 255),
-    accent3   = Color3.fromRGB(120, 220, 255),
-    green     = Color3.fromRGB(90, 230, 160),
-    red       = Color3.fromRGB(255, 105, 125),
-    yellow    = Color3.fromRGB(255, 205, 90),
-    orange    = Color3.fromRGB(255, 150, 80),
+    bg        = Color3.fromRGB(240, 240, 245),
+    card      = Color3.fromRGB(252, 252, 255),
+    card2     = Color3.fromRGB(245, 245, 250),
+    border    = Color3.fromRGB(210, 210, 220),
+    text      = Color3.fromRGB(28, 28, 38),
+    dim       = Color3.fromRGB(120, 120, 140),
+    dim2      = Color3.fromRGB(170, 170, 185),
+    accent    = Color3.fromRGB(120, 90, 255),
+    accent2   = Color3.fromRGB(180, 130, 255),
+    blue      = Color3.fromRGB(60, 140, 240),
+    green     = Color3.fromRGB(60, 200, 130),
+    red       = Color3.fromRGB(240, 90, 110),
+    yellow    = Color3.fromRGB(240, 180, 60),
 }
 
 -- ============================================================
 -- 动画注册表
 -- ============================================================
 local AnimRegistry = { tasks = {} }
-
 function AnimRegistry:add(owner, fn)
-    local task = { owner = owner, fn = fn, alive = true }
-    table.insert(self.tasks, task)
-    return task
+    local t = { owner = owner, fn = fn, alive = true }
+    table.insert(self.tasks, t)
+    return t
 end
-
-function AnimRegistry:remove(task)
-    task.alive = false
-end
+function AnimRegistry:remove(t) t.alive = false end
 
 local animTime = 0
 RunService.Heartbeat:Connect(function(dt)
     animTime = animTime + dt
     for i = #AnimRegistry.tasks, 1, -1 do
-        local task = AnimRegistry.tasks[i]
-        if not task.alive or not task.owner or not task.owner.Parent then
+        local t = AnimRegistry.tasks[i]
+        if not t.alive or not t.owner or not t.owner.Parent then
             table.remove(AnimRegistry.tasks, i)
         else
-            pcall(task.fn, dt, animTime)
+            pcall(t.fn, dt, animTime)
         end
     end
 end)
@@ -267,7 +195,6 @@ local function callDeepSeek(messages)
         bodyTable.max_tokens = CONFIG.TOKEN_PER_REPLY
     end
     local body = HttpService:JSONEncode(bodyTable)
-
     local headers = {
         ["Content-Type"] = "application/json",
         ["Authorization"] = "Bearer " .. CONFIG.API_KEY,
@@ -311,143 +238,40 @@ end
 -- ============================================================
 -- 视觉工具
 -- ============================================================
-local function addAnimatedGradientStroke(parent, thickness, speed, colors)
-    colors = colors or {C.accent, C.accent2, C.accent3, C.accent}
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = C.accent
-    stroke.Thickness = thickness or 2
-    stroke.Transparency = 0.15
-    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    stroke.Parent = parent
-
-    local grad = Instance.new("UIGradient")
-    grad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, colors[1]),
-        ColorSequenceKeypoint.new(0.33, colors[2]),
-        ColorSequenceKeypoint.new(0.66, colors[3]),
-        ColorSequenceKeypoint.new(1, colors[4] or colors[1]),
-    })
-    grad.Parent = stroke
-
-    local rot = 0
-    AnimRegistry:add(stroke, function(dt)
-        rot = (rot + dt * (speed or 40)) % 360
-        grad.Rotation = rot
-    end)
-
-    return stroke, grad
+local function addShadow(frame, size, transparency)
+    local shadow = Instance.new("ImageLabel")
+    shadow.Name = "Shadow"
+    shadow.Size = UDim2.new(1, size or 30, 1, size or 30)
+    shadow.Position = UDim2.new(0, -(size or 30)/2, 0, -(size or 30)/2)
+    shadow.BackgroundTransparency = 1
+    shadow.Image = "rbxassetid://5028857084"
+    shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    shadow.ImageTransparency = transparency or 0.7
+    shadow.ScaleType = Enum.ScaleType.Slice
+    shadow.SliceCenter = Rect.new(24, 24, 276, 276)
+    shadow.ZIndex = -1
+    shadow.Parent = frame
+    return shadow
 end
 
 local function addGlow(frame, color, size, transparency)
     local glow = Instance.new("ImageLabel")
-    glow.Name = "Glow"
     glow.Size = UDim2.new(1, size or 40, 1, size or 40)
     glow.Position = UDim2.new(0, -(size or 40)/2, 0, -(size or 40)/2)
     glow.BackgroundTransparency = 1
     glow.Image = "rbxassetid://5028857084"
     glow.ImageColor3 = color or C.accent
-    glow.ImageTransparency = transparency or 0.5
+    glow.ImageTransparency = transparency or 0.7
     glow.ScaleType = Enum.ScaleType.Slice
     glow.SliceCenter = Rect.new(24, 24, 276, 276)
     glow.ZIndex = -1
     glow.Parent = frame
-
-    local base = transparency or 0.5
-    AnimRegistry:add(glow, function(dt, t)
-        glow.ImageTransparency = base + math.sin(t * 1.5) * 0.12
-    end)
-
     return glow
-end
-
-local function addShadow(frame)
-    local shadow = Instance.new("ImageLabel")
-    shadow.Name = "Shadow"
-    shadow.Size = UDim2.new(1, 40, 1, 40)
-    shadow.Position = UDim2.new(0, -20, 0, -20)
-    shadow.BackgroundTransparency = 1
-    shadow.Image = "rbxassetid://5028857084"
-    shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
-    shadow.ImageTransparency = 0.35
-    shadow.ScaleType = Enum.ScaleType.Slice
-    shadow.SliceCenter = Rect.new(24, 24, 276, 276)
-    shadow.ZIndex = -2
-    shadow.Parent = frame
-    return shadow
-end
-
-local function addGlassHighlight(frame, radius)
-    local hl = Instance.new("Frame")
-    hl.Name = "GlassHighlight"
-    hl.Size = UDim2.new(1, 0, 0, 60)
-    hl.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    hl.BackgroundTransparency = 0.94
-    hl.BorderSizePixel = 0
-    hl.ZIndex = 2
-    hl.Parent = frame
-    local hlc = Instance.new("UICorner")
-    hlc.CornerRadius = UDim.new(0, radius or 12)
-    hlc.Parent = hl
-    local hlg = Instance.new("UIGradient")
-    hlg.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0),
-        NumberSequenceKeypoint.new(1, 1),
-    })
-    hlg.Rotation = 90
-    hlg.Parent = hl
-    return hl
-end
-
-local function addParticles(frame, count)
-    count = count or 12
-    local holder = Instance.new("Frame")
-    holder.Name = "Particles"
-    holder.Size = UDim2.new(1, 0, 1, 0)
-    holder.BackgroundTransparency = 1
-    holder.ClipsDescendants = true
-    holder.ZIndex = 0
-    holder.Parent = frame
-
-    local particles = {}
-    for i = 1, count do
-        local p = Instance.new("Frame")
-        p.Size = UDim2.fromOffset(math.random(2, 4), math.random(2, 4))
-        p.Position = UDim2.new(math.random(), 0, math.random(), 0)
-        p.BackgroundColor3 = (i % 3 == 0) and C.accent2 or (i % 3 == 1) and C.accent or C.accent3
-        p.BackgroundTransparency = 0.5
-        p.BorderSizePixel = 0
-        p.Parent = holder
-        local pc = Instance.new("UICorner")
-        pc.CornerRadius = UDim.new(1, 0)
-        pc.Parent = p
-        table.insert(particles, {
-            obj = p,
-            speedX = (math.random() - 0.5) * 0.03,
-            speedY = -(0.01 + math.random() * 0.03),
-            phase = math.random() * math.pi * 2,
-        })
-    end
-
-    AnimRegistry:add(holder, function(dt)
-        for _, p in ipairs(particles) do
-            local pos = p.obj.Position
-            local nx = pos.X.Scale + p.speedX * dt
-            local ny = pos.Y.Scale + p.speedY * dt
-            if ny < -0.05 then ny = 1.05 end
-            if nx < -0.05 then nx = 1.05 end
-            if nx > 1.05 then nx = -0.05 end
-            p.obj.Position = UDim2.new(nx, 0, ny, 0)
-            p.phase = p.phase + dt * 2
-            p.obj.BackgroundTransparency = 0.4 + math.sin(p.phase) * 0.3
-        end
-    end)
-
-    return holder
 end
 
 local function createThinkingDots(parent)
     local holder = Instance.new("Frame")
-    holder.Size = UDim2.fromOffset(60, 16)
+    holder.Size = UDim2.fromOffset(48, 14)
     holder.BackgroundTransparency = 1
     holder.Visible = false
     holder.Parent = parent
@@ -455,8 +279,8 @@ local function createThinkingDots(parent)
     local dots = {}
     for i = 1, 3 do
         local d = Instance.new("Frame")
-        d.Size = UDim2.fromOffset(6, 6)
-        d.Position = UDim2.fromOffset((i-1) * 14, 5)
+        d.Size = UDim2.fromOffset(5, 5)
+        d.Position = UDim2.fromOffset((i-1) * 12, 5)
         d.BackgroundColor3 = C.accent
         d.BorderSizePixel = 0
         d.Parent = holder
@@ -471,153 +295,85 @@ local function createThinkingDots(parent)
         if not active then return end
         for i, d in ipairs(dots) do
             local phase = t * 4 - (i - 1) * 0.5
-            local y = math.abs(math.sin(phase)) * -7
-            d.Position = UDim2.fromOffset((i-1) * 14, 5 + y)
-            local alpha = 0.5 + 0.5 * math.abs(math.sin(phase))
-            d.BackgroundTransparency = 1 - alpha
-            d.BackgroundColor3 = Color3.fromRGB(
-                130 + math.sin(phase) * 40,
-                170 + math.cos(phase) * 40,
-                255
-            )
+            local y = math.abs(math.sin(phase)) * -5
+            d.Position = UDim2.fromOffset((i-1) * 12, 5 + y)
+            d.BackgroundTransparency = 1 - (0.5 + 0.5 * math.abs(math.sin(phase)))
         end
     end)
 
-    local function start()
-        holder.Visible = true
-        active = true
-    end
-
-    local function stop()
-        holder.Visible = false
-        active = false
-    end
-
-    return holder, start, stop
-end
-
-local function typewriter(label, text, speed, onDone)
-    label.Text = ""
-    local i = 0
-    local task = AnimRegistry:add(label, function(dt)
-        i = i + dt * (speed or 60)
-        local n = math.floor(i)
-        if n >= #text then
-            label.Text = text
-            AnimRegistry:remove(task)
-            if onDone then onDone() end
-        else
-            label.Text = text:sub(1, n)
-        end
-    end)
-    return task
+    return holder,
+        function() holder.Visible = true; active = true end,
+        function() holder.Visible = false; active = false end
 end
 
 -- ============================================================
--- 卡密验证
+-- 卡密
 -- ============================================================
 local function showKeyGate(onSuccess)
     local gate = Instance.new("ScreenGui")
     gate.Name = "AIAgentKeyGate"
     gate.ResetOnSpawn = false
-    gate.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gate.IgnoreGuiInset = true
     gate.DisplayOrder = 100
     gate.Parent = PG
 
-    local gateScale = Instance.new("UIScale")
-    local camera = workspace.CurrentCamera
-    local function refreshGateScale()
-        if not camera then return end
-        local v = camera.ViewportSize
-        gateScale.Scale = math.clamp(math.min(v.X / 900, v.Y / 650), 0.72, 1.15)
-    end
-    refreshGateScale()
-    gateScale.Parent = gate
-    if camera then
-        camera:GetPropertyChangedSignal("ViewportSize"):Connect(refreshGateScale)
-    end
-
     local bg = Instance.new("Frame")
     bg.Size = UDim2.new(1, 0, 1, 0)
     bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    bg.BackgroundTransparency = 0.3
+    bg.BackgroundTransparency = 0.5
     bg.BorderSizePixel = 0
     bg.Parent = gate
 
     local box = Instance.new("Frame")
-    box.Size = UDim2.fromOffset(420, 260)
-    box.Position = UDim2.new(0.5, -210, 0.5, -130)
-    box.BackgroundColor3 = C.bgGlass
-    box.BackgroundTransparency = 0.05
+    box.Size = UDim2.fromOffset(340, 220)
+    box.Position = UDim2.new(0.5, -170, 0.5, -110)
+    box.BackgroundColor3 = C.card
     box.BorderSizePixel = 0
     box.Parent = gate
     local bc = Instance.new("UICorner")
     bc.CornerRadius = UDim.new(0, 20)
     bc.Parent = box
-    addShadow(box)
-    addGlow(box, C.accent, 60, 0.45)
-    addAnimatedGradientStroke(box, 2, 50)
-    addGlassHighlight(box, 20)
+    addShadow(box, 40, 0.6)
 
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -40, 0, 32)
-    title.Position = UDim2.fromOffset(20, 22)
+    title.Size = UDim2.new(1, -40, 0, 28)
+    title.Position = UDim2.fromOffset(24, 24)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.GothamBold
-    title.TextSize = 24
+    title.TextSize = 22
     title.TextColor3 = C.text
     title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Text = "AI AGENT"
+    title.Text = "Ultra"
     title.Parent = box
 
     local titleGrad = Instance.new("UIGradient")
     titleGrad.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, C.accent),
-        ColorSequenceKeypoint.new(0.5, C.accent2),
-        ColorSequenceKeypoint.new(1, C.accent3),
+        ColorSequenceKeypoint.new(1, C.accent2),
     })
     titleGrad.Rotation = 30
     titleGrad.Parent = title
 
-    local subtitle = Instance.new("TextLabel")
-    subtitle.Size = UDim2.new(1, -40, 0, 16)
-    subtitle.Position = UDim2.fromOffset(20, 56)
-    subtitle.BackgroundTransparency = 1
-    subtitle.Font = Enum.Font.Code
-    subtitle.TextSize = 11
-    subtitle.TextColor3 = C.dim
-    subtitle.TextXAlignment = Enum.TextXAlignment.Left
-    subtitle.Text = "// secure access required"
-    subtitle.Parent = box
-
-    local bar = Instance.new("Frame")
-    bar.Size = UDim2.new(1, -40, 0, 1)
-    bar.Position = UDim2.fromOffset(20, 82)
-    bar.BackgroundColor3 = C.border
-    bar.BorderSizePixel = 0
-    bar.Parent = box
-    local bargrad = Instance.new("UIGradient")
-    bargrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C.accent),
-        ColorSequenceKeypoint.new(0.5, C.accent2),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(0,0,0)),
-    })
-    bargrad.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0),
-        NumberSequenceKeypoint.new(1, 1),
-    })
-    bargrad.Parent = bar
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(1, -40, 0, 14)
+    sub.Position = UDim2.fromOffset(24, 54)
+    sub.BackgroundTransparency = 1
+    sub.Font = Enum.Font.Gotham
+    sub.TextSize = 11
+    sub.TextColor3 = C.dim
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.Text = "输入卡密访问"
+    sub.Parent = box
 
     local input = Instance.new("TextBox")
-    input.Size = UDim2.new(1, -40, 0, 48)
-    input.Position = UDim2.fromOffset(20, 100)
-    input.BackgroundColor3 = C.surface
+    input.Size = UDim2.new(1, -40, 0, 44)
+    input.Position = UDim2.fromOffset(20, 86)
+    input.BackgroundColor3 = C.card2
     input.BorderSizePixel = 0
     input.Font = Enum.Font.Code
-    input.TextSize = 16
+    input.TextSize = 15
     input.TextColor3 = C.text
-    input.PlaceholderText = "输入卡密..."
+    input.PlaceholderText = "••••••"
     input.PlaceholderColor3 = C.dim2
     input.Text = ""
     input.ClearTextOnFocus = false
@@ -629,85 +385,50 @@ local function showKeyGate(onSuccess)
     ip.PaddingLeft = UDim.new(0, 16)
     ip.PaddingRight = UDim.new(0, 16)
     ip.Parent = input
-    local istroke = Instance.new("UIStroke")
-    istroke.Color = C.accent
-    istroke.Thickness = 1.5
-    istroke.Transparency = 0.5
-    istroke.Parent = input
 
-    input.Focused:Connect(function()
-        TweenService:Create(istroke, TweenInfo.new(0.2), {Transparency = 0.1}):Play()
-    end)
-    input.FocusLost:Connect(function()
-        TweenService:Create(istroke, TweenInfo.new(0.2), {Transparency = 0.5}):Play()
-    end)
-
-    local errLabel = Instance.new("TextLabel")
-    errLabel.Size = UDim2.new(1, -40, 0, 14)
-    errLabel.Position = UDim2.fromOffset(20, 156)
-    errLabel.BackgroundTransparency = 1
-    errLabel.Font = Enum.Font.Gotham
-    errLabel.TextSize = 10
-    errLabel.TextColor3 = C.red
-    errLabel.TextXAlignment = Enum.TextXAlignment.Left
-    errLabel.Text = ""
-    errLabel.Parent = box
-
-    local submitBtn = Instance.new("TextButton")
-    submitBtn.Size = UDim2.new(1, -40, 0, 48)
-    submitBtn.Position = UDim2.fromOffset(20, 178)
-    submitBtn.BackgroundColor3 = C.accent
-    submitBtn.BorderSizePixel = 0
-    submitBtn.Font = Enum.Font.GothamBold
-    submitBtn.TextSize = 15
-    submitBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    submitBtn.Text = "验证"
-    submitBtn.AutoButtonColor = false
-    submitBtn.Parent = box
+    local submit = Instance.new("TextButton")
+    submit.Size = UDim2.new(1, -40, 0, 44)
+    submit.Position = UDim2.fromOffset(20, 144)
+    submit.BackgroundColor3 = C.accent
+    submit.BorderSizePixel = 0
+    submit.Font = Enum.Font.GothamBold
+    submit.TextSize = 14
+    submit.TextColor3 = Color3.fromRGB(255, 255, 255)
+    submit.Text = "继续"
+    submit.AutoButtonColor = false
+    submit.Parent = box
     local sc = Instance.new("UICorner")
     sc.CornerRadius = UDim.new(0, 12)
-    sc.Parent = submitBtn
-    local sgrad = Instance.new("UIGradient")
-    sgrad.Color = ColorSequence.new({
+    sc.Parent = submit
+    local sg = Instance.new("UIGradient")
+    sg.Color = ColorSequence.new({
         ColorSequenceKeypoint.new(0, C.accent),
         ColorSequenceKeypoint.new(1, C.accent2),
     })
-    sgrad.Rotation = 45
-    sgrad.Parent = submitBtn
-    addGlow(submitBtn, C.accent, 20, 0.7)
+    sg.Rotation = 45
+    sg.Parent = submit
 
-    submitBtn.MouseEnter:Connect(function()
-        TweenService:Create(submitBtn, TweenInfo.new(0.2), {Size = UDim2.new(1, -34, 0, 50)}):Play()
-    end)
-    submitBtn.MouseLeave:Connect(function()
-        TweenService:Create(submitBtn, TweenInfo.new(0.2), {Size = UDim2.new(1, -40, 0, 48)}):Play()
-    end)
-
-    local function trySubmit()
-        local key = input.Text:gsub("%s", "")
-        if key == VALID_KEY then
+    local function try()
+        if input.Text:gsub("%s", "") == VALID_KEY then
             gate:Destroy()
             onSuccess()
         else
-            errLabel.Text = "卡密错误"
             input.Text = ""
             local orig = box.Position
             for i = 1, 6 do
-                box.Position = UDim2.new(0.5, -210 + (i % 2 == 0 and 8 or -8), 0.5, -130)
+                box.Position = UDim2.new(0.5, -170 + (i % 2 == 0 and 8 or -8), 0.5, -110)
                 task.wait(0.03)
             end
             box.Position = orig
         end
     end
 
-    submitBtn.MouseButton1Click:Connect(trySubmit)
-    input.FocusLost:Connect(function(enter)
-        if enter then trySubmit() end
-    end)
+    submit.MouseButton1Click:Connect(try)
+    input.FocusLost:Connect(function(e) if e then try() end end)
 end
 
 -- ============================================================
--- 主 UI
+-- 主 UI（折叠式）
 -- ============================================================
 local function createUI()
     local gui = Instance.new("ScreenGui")
@@ -716,360 +437,40 @@ local function createUI()
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.Parent = PG
 
-    local uiScale = Instance.new("UIScale")
-    local camera = workspace.CurrentCamera
-    local function refreshScale()
-        if not camera then return end
-        local v = camera.ViewportSize
-        uiScale.Scale = math.clamp(math.min(v.X / 1280, v.Y / 820), 0.62, 1.15)
-    end
-    refreshScale()
-    uiScale.Parent = gui
-    if camera then
-        camera:GetPropertyChangedSignal("ViewportSize"):Connect(refreshScale)
-    end
-    workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-        camera = workspace.CurrentCamera
-        refreshScale()
-    end)
-
-    local WINDOW_W = 860
-    local WINDOW_H = 560
-    local BAR_H = 80
+    -- 折叠窗口尺寸
+    local CAPSULE_W = 420
+    local CAPSULE_H = 110   -- 收起：只有顶部胶囊
+    local EXPANDED_H = 560  -- 展开
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, WINDOW_W, 0, WINDOW_H)
-    main.Position = UDim2.new(0.5, -WINDOW_W/2, 0.5, -WINDOW_H/2)
-    main.BackgroundColor3 = C.bgGlass
-    main.BackgroundTransparency = 0.02
+    main.Size = UDim2.new(0, CAPSULE_W, 0, CAPSULE_H)
+    main.Position = UDim2.new(0.5, -CAPSULE_W/2, 0.5, -CAPSULE_H/2)
+    main.BackgroundColor3 = C.bg
     main.BorderSizePixel = 0
     main.Active = true
+    main.ClipsDescendants = true
     main.Parent = gui
     local mc = Instance.new("UICorner")
     mc.CornerRadius = UDim.new(0, 24)
     mc.Parent = main
-    addShadow(main)
-    addGlow(main, C.accent, 70, 0.5)
-    addAnimatedGradientStroke(main, 2, 45)
-    addParticles(main, 18)
-    addGlassHighlight(main, 24)
+    addShadow(main, 40, 0.65)
 
-    -- Ambient
-    local ambient = Instance.new("Frame")
-    ambient.Size = UDim2.new(1, 0, 1, 0)
-    ambient.BackgroundTransparency = 1
-    ambient.ClipsDescendants = true
-    ambient.ZIndex = 1
-    ambient.Parent = main
+    -- ============================================================
+    -- 顶部胶囊区（永远显示）
+    -- ============================================================
+    local capsule = Instance.new("Frame")
+    capsule.Size = UDim2.new(1, 0, 0, CAPSULE_H)
+    capsule.BackgroundColor3 = C.card
+    capsule.BorderSizePixel = 0
+    capsule.ZIndex = 10
+    capsule.Parent = main
+    local capCorner = Instance.new("UICorner")
+    capCorner.CornerRadius = UDim.new(0, 24)
+    capCorner.Parent = capsule
 
-    for i = 1, 12 do
-        local d = Instance.new("Frame")
-        d.Size = UDim2.fromOffset(math.random(2, 5), math.random(2, 5))
-        d.Position = UDim2.new(math.random(5,95)/100, 0, math.random(8,92)/100, 0)
-        d.BackgroundColor3 = (i % 3 == 0) and C.accent2 or C.accent3
-        d.BackgroundTransparency = 0.6
-        d.BorderSizePixel = 0
-        d.ZIndex = 1
-        d.Parent = ambient
-        local dc = Instance.new("UICorner")
-        dc.CornerRadius = UDim.new(1, 0)
-        dc.Parent = d
-
-        local seed = i * 0.7
-        AnimRegistry:add(d, function(dt, t)
-            local phase = t * 0.6 + seed
-            d.Position = UDim2.new(
-                math.clamp((i * 0.08) + math.sin(phase) * 0.05, 0.02, 0.98), 0,
-                math.clamp((i * 0.07) + math.cos(phase * 0.7) * 0.06, 0.05, 0.95), 0
-            )
-            d.BackgroundTransparency = 0.5 + math.sin(phase * 1.3) * 0.2
-        end)
-    end
-
-    -- 标题栏
-    local titleBar = Instance.new("Frame")
-    titleBar.Size = UDim2.new(1, 0, 0, BAR_H)
-    titleBar.BackgroundTransparency = 1
-    titleBar.ZIndex = 5
-    titleBar.Parent = main
-
-    local dot = Instance.new("Frame")
-    dot.Size = UDim2.fromOffset(10, 10)
-    dot.Position = UDim2.fromOffset(24, 28)
-    dot.BackgroundColor3 = C.green
-    dot.BorderSizePixel = 0
-    dot.ZIndex = 6
-    dot.Parent = titleBar
-    local dc = Instance.new("UICorner")
-    dc.CornerRadius = UDim.new(1, 0)
-    dc.Parent = dot
-    addGlow(dot, C.green, 12, 0.5)
-
-    AnimRegistry:add(dot, function(dt, t)
-        local s = 10 + math.sin(t * 3) * 2
-        dot.Size = UDim2.fromOffset(s, s)
-        dot.Position = UDim2.fromOffset(24 - (s-10)/2, 28 - (s-10)/2)
-    end)
-
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -300, 0, 32)
-    title.Position = UDim2.fromOffset(46, 16)
-    title.BackgroundTransparency = 1
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 24
-    title.TextColor3 = C.text
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Text = "AI AGENT"
-    title.ZIndex = 6
-    title.Parent = titleBar
-
-    local titleGrad = Instance.new("UIGradient")
-    titleGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C.accent),
-        ColorSequenceKeypoint.new(0.5, C.accent2),
-        ColorSequenceKeypoint.new(1, C.accent3),
-    })
-    titleGrad.Rotation = 30
-    titleGrad.Parent = title
-
-    AnimRegistry:add(title, function(dt, t)
-        title.Position = UDim2.fromOffset(46, 16 + math.sin(t * 1.5) * 0.8)
-    end)
-
-    local subtitle = Instance.new("TextLabel")
-    subtitle.Size = UDim2.new(1, -300, 0, 14)
-    subtitle.Position = UDim2.fromOffset(46, 46)
-    subtitle.BackgroundTransparency = 1
-    subtitle.Font = Enum.Font.Code
-    subtitle.TextSize = 10
-    subtitle.TextColor3 = C.dim
-    subtitle.TextXAlignment = Enum.TextXAlignment.Left
-    subtitle.Text = "// NEURAL CORE  ·  TOOL CALLING  ·  DEEPSEEK V4.1"
-    subtitle.ZIndex = 6
-    subtitle.Parent = titleBar
-
-    -- 等级显示（标题栏右）
-    local levelDisplay = Instance.new("TextButton")
-    levelDisplay.Size = UDim2.fromOffset(120, 34)
-    levelDisplay.Position = UDim2.new(1, -320, 0, 22)
-    levelDisplay.BackgroundColor3 = C.surface2
-    levelDisplay.BorderSizePixel = 0
-    levelDisplay.Font = Enum.Font.GothamBold
-    levelDisplay.TextSize = 11
-    levelDisplay.TextColor3 = C.accent3
-    levelDisplay.Text = "等级: 中"
-    levelDisplay.AutoButtonColor = false
-    levelDisplay.ZIndex = 6
-    levelDisplay.Parent = titleBar
-    local ldc = Instance.new("UICorner")
-    ldc.CornerRadius = UDim.new(0, 8)
-    ldc.Parent = levelDisplay
-    local lds = Instance.new("UIStroke")
-    lds.Color = C.accent3
-    lds.Thickness = 1
-    lds.Transparency = 0.5
-    lds.Parent = levelDisplay
-
-    -- 关闭
-    local closeBtn = Instance.new("TextButton")
-    closeBtn.Size = UDim2.fromOffset(36, 32)
-    closeBtn.Position = UDim2.new(1, -54, 0, 24)
-    closeBtn.BackgroundColor3 = C.surface2
-    closeBtn.BorderSizePixel = 0
-    closeBtn.Font = Enum.Font.GothamBold
-    closeBtn.TextSize = 15
-    closeBtn.TextColor3 = C.text
-    closeBtn.Text = "×"
-    closeBtn.AutoButtonColor = false
-    closeBtn.ZIndex = 6
-    closeBtn.Parent = titleBar
-    local cbc = Instance.new("UICorner")
-    cbc.CornerRadius = UDim.new(0, 8)
-    cbc.Parent = closeBtn
-
-    local minBtn = Instance.new("TextButton")
-    minBtn.Size = UDim2.fromOffset(36, 32)
-    minBtn.Position = UDim2.new(1, -98, 0, 24)
-    minBtn.BackgroundColor3 = C.surface2
-    minBtn.BorderSizePixel = 0
-    minBtn.Font = Enum.Font.GothamBold
-    minBtn.TextSize = 15
-    minBtn.TextColor3 = C.text
-    minBtn.Text = "—"
-    minBtn.AutoButtonColor = false
-    minBtn.ZIndex = 6
-    minBtn.Parent = titleBar
-    local minc = Instance.new("UICorner")
-    minc.CornerRadius = UDim.new(0, 8)
-    minc.Parent = minBtn
-
-    local sep = Instance.new("Frame")
-    sep.Size = UDim2.new(1, -48, 0, 1)
-    sep.Position = UDim2.fromOffset(24, BAR_H - 2)
-    sep.BackgroundColor3 = C.border
-    sep.BorderSizePixel = 0
-    sep.ZIndex = 5
-    sep.Parent = main
-    local sepgrad = Instance.new("UIGradient")
-    sepgrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C.accent),
-        ColorSequenceKeypoint.new(0.5, C.accent2),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(0,0,0)),
-    })
-    sepgrad.Transparency = NumberSequence.new({
-        NumberSequenceKeypoint.new(0, 0),
-        NumberSequenceKeypoint.new(0.7, 0.5),
-        NumberSequenceKeypoint.new(1, 1),
-    })
-    sepgrad.Parent = sep
-
-    -- 状态栏
-    local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(1, -280, 0, 18)
-    status.Position = UDim2.new(0, 66, 1, -34)
-    status.BackgroundTransparency = 1
-    status.Font = Enum.Font.Code
-    status.TextSize = 11
-    status.TextColor3 = C.dim
-    status.TextXAlignment = Enum.TextXAlignment.Left
-    status.Text = "ready"
-    status.ZIndex = 6
-    status.Parent = main
-
-    local thinkingHolder, startThinking, stopThinking = createThinkingDots(main)
-    thinkingHolder.Position = UDim2.new(0, 24, 1, -36)
-    thinkingHolder.Size = UDim2.fromOffset(50, 18)
-    thinkingHolder.ZIndex = 6
-
-    local statusText = status
-
-    local function say(msg)
-        stopThinking()
-        statusText.Text = msg
-        task.delay(3, function()
-            if statusText and statusText.Parent then statusText.Text = "ready" end
-        end)
-    end
-
-    local function setThinking(msg)
-        statusText.Text = msg or ""
-        startThinking()
-    end
-
-    -- Token 显示（底部右）
-    local tokenDisplay = Instance.new("TextLabel")
-    tokenDisplay.Size = UDim2.new(0, 240, 0, 18)
-    tokenDisplay.Position = UDim2.new(1, -264, 1, -34)
-    tokenDisplay.BackgroundTransparency = 1
-    tokenDisplay.Font = Enum.Font.Code
-    tokenDisplay.TextSize = 10
-    tokenDisplay.TextColor3 = C.dim2
-    tokenDisplay.TextXAlignment = Enum.TextXAlignment.Right
-    tokenDisplay.Text = "tokens: 0 / 8000"
-    tokenDisplay.ZIndex = 6
-    tokenDisplay.Parent = main
-
-    -- 圆球
-    local ball = Instance.new("TextButton")
-    ball.Size = UDim2.new(0, 56, 0, 56)
-    ball.Position = UDim2.new(0, 20, 0.5, -28)
-    ball.BackgroundColor3 = C.accent
-    ball.Text = "AI"
-    ball.TextColor3 = Color3.fromRGB(255, 255, 255)
-    ball.TextSize = 16
-    ball.Font = Enum.Font.GothamBold
-    ball.BorderSizePixel = 0
-    ball.Visible = false
-    ball.Active = true
-    ball.Parent = gui
-    local ballCorner = Instance.new("UICorner")
-    ballCorner.CornerRadius = UDim.new(1, 0)
-    ballCorner.Parent = ball
-    local ballGrad = Instance.new("UIGradient")
-    ballGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C.accent),
-        ColorSequenceKeypoint.new(1, C.accent2),
-    })
-    ballGrad.Rotation = 45
-    ballGrad.Parent = ball
-    addGlow(ball, C.accent, 30, 0.5)
-
-    local pulseRing = Instance.new("Frame")
-    pulseRing.Size = UDim2.fromOffset(56, 56)
-    pulseRing.Position = UDim2.fromOffset(0, 0)
-    pulseRing.BackgroundTransparency = 1
-    pulseRing.Visible = false
-    pulseRing.ZIndex = -1
-    pulseRing.Parent = ball
-    local prCorner = Instance.new("UICorner")
-    prCorner.CornerRadius = UDim.new(1, 0)
-    prCorner.Parent = pulseRing
-    local prStroke = Instance.new("UIStroke")
-    prStroke.Color = C.accent2
-    prStroke.Thickness = 2
-    prStroke.Transparency = 0.3
-    prStroke.Parent = pulseRing
-
-    AnimRegistry:add(ball, function(dt, t)
-        if not ball.Visible then return end
-        local s = (t * 1.5) % 1
-        pulseRing.Size = UDim2.fromOffset(56 + s * 32, 56 + s * 32)
-        pulseRing.Position = UDim2.fromOffset(-s * 16, -s * 16)
-        prStroke.Transparency = 0.3 + s * 0.6
-    end)
-
-    local ballDragging, ballDragStart, ballStartPos
-    ball.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            ballDragging = true
-            ballDragStart = input.Position
-            ballStartPos = ball.Position
-        end
-    end)
-    ball.InputChanged:Connect(function(input)
-        if ballDragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch) then
-            local delta = input.Position - ballDragStart
-            ball.Position = UDim2.new(
-                ballStartPos.X.Scale, ballStartPos.X.Offset + delta.X,
-                ballStartPos.Y.Scale, ballStartPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            ballDragging = false
-        end
-    end)
-
-    minBtn.MouseButton1Click:Connect(function()
-        main.Visible = false
-        ball.Visible = true
-        pulseRing.Visible = true
-    end)
-    ball.MouseButton1Click:Connect(function()
-        main.Visible = true
-        ball.Visible = false
-    end)
-
-    closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
-    closeBtn.MouseEnter:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.2), {BackgroundColor3 = C.red}):Play()
-    end)
-    closeBtn.MouseLeave:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.2), {BackgroundColor3 = C.surface2}):Play()
-    end)
-    minBtn.MouseEnter:Connect(function()
-        TweenService:Create(minBtn, TweenInfo.new(0.2), {BackgroundColor3 = C.accent}):Play()
-    end)
-    minBtn.MouseLeave:Connect(function()
-        TweenService:Create(minBtn, TweenInfo.new(0.2), {BackgroundColor3 = C.surface2}):Play()
-    end)
-
+    -- 拖动
     local dragging, dragStart, startPos
-    titleBar.InputBegan:Connect(function(input)
+    capsule.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
@@ -1077,13 +478,13 @@ local function createUI()
             startPos = main.Position
         end
     end)
-    titleBar.InputChanged:Connect(function(input)
+    capsule.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
             or input.UserInputType == Enum.UserInputType.Touch) then
-            local delta = input.Position - dragStart
+            local d = input.Position - dragStart
             main.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + delta.X,
-                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y
             )
         end
     end)
@@ -1094,120 +495,280 @@ local function createUI()
         end
     end)
 
+    -- 左：闪电图标
+    local icon = Instance.new("TextLabel")
+    icon.Size = UDim2.fromOffset(24, 24)
+    icon.Position = UDim2.fromOffset(20, 20)
+    icon.BackgroundTransparency = 1
+    icon.Text = "⚡"
+    icon.TextSize = 16
+    icon.TextColor3 = C.dim
+    icon.Font = Enum.Font.GothamBold
+    icon.ZIndex = 11
+    icon.Parent = capsule
+
+    -- 中：模型名 + 等级
+    local modelName = Instance.new("TextLabel")
+    modelName.Size = UDim2.new(1, -100, 0, 22)
+    modelName.Position = UDim2.fromOffset(50, 16)
+    modelName.BackgroundTransparency = 1
+    modelName.Font = Enum.Font.GothamBold
+    modelName.TextSize = 17
+    modelName.TextColor3 = C.accent
+    modelName.TextXAlignment = Enum.TextXAlignment.Center
+    modelName.Text = "Ultra"
+    modelName.ZIndex = 11
+    modelName.Parent = capsule
+
+    local modelGrad = Instance.new("UIGradient")
+    modelGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, C.accent),
+        ColorSequenceKeypoint.new(0.5, C.accent2),
+        ColorSequenceKeypoint.new(1, C.accent),
+    })
+    modelGrad.Rotation = 20
+    modelGrad.Parent = modelName
+
+    local modelDesc = Instance.new("TextLabel")
+    modelDesc.Size = UDim2.new(1, -100, 0, 18)
+    modelDesc.Position = UDim2.fromOffset(50, 38)
+    modelDesc.BackgroundTransparency = 1
+    modelDesc.Font = Enum.Font.Gotham
+    modelDesc.TextSize = 13
+    modelDesc.TextColor3 = C.text
+    modelDesc.TextXAlignment = Enum.TextXAlignment.Center
+    modelDesc.Text = "GPT-5.6 Sol"
+    modelDesc.ZIndex = 11
+    modelDesc.Parent = capsule
+
+    -- 右：刷新按钮
+    local refreshBtn = Instance.new("TextButton")
+    refreshBtn.Size = UDim2.fromOffset(24, 24)
+    refreshBtn.Position = UDim2.new(1, -44, 0, 20)
+    refreshBtn.BackgroundTransparency = 1
+    refreshBtn.Text = "↻"
+    refreshBtn.TextSize = 16
+    refreshBtn.TextColor3 = C.dim
+    refreshBtn.Font = Enum.Font.GothamBold
+    refreshBtn.AutoButtonColor = false
+    refreshBtn.ZIndex = 11
+    refreshBtn.Parent = capsule
+
+    -- 强度滑块
+    local sliderBg = Instance.new("Frame")
+    sliderBg.Size = UDim2.new(1, -40, 0, 36)
+    sliderBg.Position = UDim2.fromOffset(20, 64)
+    sliderBg.BackgroundColor3 = C.card2
+    sliderBg.BorderSizePixel = 0
+    sliderBg.ZIndex = 11
+    sliderBg.Parent = capsule
+    local sbgCorner = Instance.new("UICorner")
+    sbgCorner.CornerRadius = UDim.new(1, 0)
+    sbgCorner.Parent = sliderBg
+
+    local sliderFill = Instance.new("Frame")
+    sliderFill.Size = UDim2.new(0.5, 0, 1, 0)
+    sliderFill.BackgroundColor3 = C.accent
+    sliderFill.BorderSizePixel = 0
+    sliderFill.ZIndex = 12
+    sliderFill.Parent = sliderBg
+    local sfCorner = Instance.new("UICorner")
+    sfCorner.CornerRadius = UDim.new(1, 0)
+    sfCorner.Parent = sliderFill
+
+    local fillGrad = Instance.new("UIGradient")
+    fillGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, C.accent),
+        ColorSequenceKeypoint.new(1, C.accent2),
+    })
+    fillGrad.Rotation = 0
+    fillGrad.Parent = sliderFill
+
+    -- 星星装饰
+    for i = 1, 8 do
+        local star = Instance.new("Frame")
+        star.Size = UDim2.fromOffset(2, 2)
+        star.Position = UDim2.new(math.random(5, 95)/100, 0, math.random(20, 80)/100, 0)
+        star.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        star.BackgroundTransparency = 0.3
+        star.BorderSizePixel = 0
+        star.ZIndex = 13
+        star.Parent = sliderFill
+        local sc = Instance.new("UICorner")
+        sc.CornerRadius = UDim.new(1, 0)
+        sc.Parent = star
+    end
+
+    local sliderKnob = Instance.new("Frame")
+    sliderKnob.Size = UDim2.fromOffset(32, 32)
+    sliderKnob.AnchorPoint = Vector2.new(0.5, 0.5)
+    sliderKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
+    sliderKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    sliderKnob.BorderSizePixel = 0
+    sliderKnob.ZIndex = 14
+    sliderKnob.Parent = sliderBg
+    local skCorner = Instance.new("UICorner")
+    skCorner.CornerRadius = UDim.new(1, 0)
+    skCorner.Parent = sliderKnob
+    local skStroke = Instance.new("UIStroke")
+    skStroke.Color = Color3.fromRGB(230, 230, 240)
+    skStroke.Thickness = 1
+    skStroke.Parent = sliderKnob
+
+    -- 滑块交互
+    local sliderDragging = false
+    local function updateSlider(x)
+        local rel = math.clamp((x - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
+        sliderFill.Size = UDim2.new(rel, 0, 1, 0)
+        sliderKnob.Position = UDim2.new(rel, 0, 0.5, 0)
+        -- 映射到等级
+        local lvl = math.clamp(math.floor(rel * #REASONING_LEVELS) + 1, 1, #REASONING_LEVELS)
+        if lvl ~= currentLevel then
+            currentLevel = lvl
+            if levelText then
+                levelText.Text = "强度: " .. REASONING_LEVELS[currentLevel].name
+            end
+        end
+    end
+
+    sliderBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            sliderDragging = true
+            updateSlider(input.Position.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if sliderDragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch) then
+            updateSlider(input.Position.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            sliderDragging = false
+        end
+    end)
+
+    -- 初始化滑块位置（默认"中"）
+    task.defer(function()
+        updateSlider(sliderBg.AbsolutePosition.X + sliderBg.AbsoluteSize.X * (currentLevel - 0.5) / #REASONING_LEVELS)
+    end)
+
     -- ============================================================
-    -- 三栏布局：左对话 | 中设置 | 右等级
+    -- 展开面板（默认隐藏，在胶囊下方）
     -- ============================================================
-    local CONTENT_TOP = 92
-    local CONTENT_BOTTOM = 96
+    local panel = Instance.new("Frame")
+    panel.Size = UDim2.new(1, 0, 0, EXPANDED_H - CAPSULE_H)
+    panel.Position = UDim2.new(0, 0, 0, CAPSULE_H)
+    panel.BackgroundColor3 = C.bg
+    panel.BorderSizePixel = 0
+    panel.ZIndex = 5
+    panel.ClipsDescendants = true
+    panel.Parent = main
 
-    -- 左栏：对话
-    local leftPanel = Instance.new("Frame")
-    leftPanel.Size = UDim2.new(1, -420, 1, -(CONTENT_TOP + CONTENT_BOTTOM))
-    leftPanel.Position = UDim2.fromOffset(24, CONTENT_TOP)
-    leftPanel.BackgroundColor3 = C.surface
-    leftPanel.BackgroundTransparency = 0.06
-    leftPanel.BorderSizePixel = 0
-    leftPanel.ZIndex = 4
-    leftPanel.Parent = main
-    local lpc = Instance.new("UICorner")
-    lpc.CornerRadius = UDim.new(0, 16)
-    lpc.Parent = leftPanel
-    local lps = Instance.new("UIStroke")
-    lps.Color = C.border
-    lps.Thickness = 1
-    lps.Transparency = 0.5
-    lps.Parent = leftPanel
-    addGlassHighlight(leftPanel, 16)
+    -- 展开按钮（胶囊底部中央的圆点）
+    local expandBtn = Instance.new("TextButton")
+    expandBtn.Size = UDim2.fromOffset(40, 14)
+    expandBtn.Position = UDim2.new(0.5, -20, 1, -16)
+    expandBtn.BackgroundColor3 = C.accent
+    expandBtn.BorderSizePixel = 0
+    expandBtn.Text = "▾"
+    expandBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    expandBtn.TextSize = 10
+    expandBtn.Font = Enum.Font.GothamBold
+    expandBtn.AutoButtonColor = false
+    expandBtn.ZIndex = 20
+    expandBtn.Parent = capsule
+    local ebc = Instance.new("UICorner")
+    ebc.CornerRadius = UDim.new(1, 0)
+    ebc.Parent = expandBtn
 
-    local chatHeader = Instance.new("TextLabel")
-    chatHeader.Size = UDim2.new(1, -28, 0, 22)
-    chatHeader.Position = UDim2.fromOffset(14, 12)
-    chatHeader.BackgroundTransparency = 1
-    chatHeader.Text = "LIVE  /  AI CONVERSATION"
-    chatHeader.TextColor3 = C.text
-    chatHeader.TextSize = 11
-    chatHeader.Font = Enum.Font.GothamBold
-    chatHeader.TextXAlignment = Enum.TextXAlignment.Left
-    chatHeader.ZIndex = 6
-    chatHeader.Parent = leftPanel
+    -- ============================================================
+    -- 面板内容
+    -- ============================================================
+    -- 等级显示
+    local levelText = Instance.new("TextLabel")
+    levelText.Size = UDim2.new(1, -40, 0, 22)
+    levelText.Position = UDim2.fromOffset(20, 12)
+    levelText.BackgroundTransparency = 1
+    levelText.Font = Enum.Font.GothamBold
+    levelText.TextSize = 12
+    levelText.TextColor3 = C.text
+    levelText.TextXAlignment = Enum.TextXAlignment.Left
+    levelText.Text = "强度: " .. REASONING_LEVELS[currentLevel].name
+    levelText.Parent = panel
 
-    local chatLine = Instance.new("Frame")
-    chatLine.Size = UDim2.new(0, 52, 0, 2)
-    chatLine.Position = UDim2.fromOffset(14, 36)
-    chatLine.BackgroundColor3 = C.accent2
-    chatLine.BorderSizePixel = 0
-    chatLine.ZIndex = 6
-    chatLine.Parent = leftPanel
+    -- 对话区
+    local chatBox = Instance.new("Frame")
+    chatBox.Size = UDim2.new(1, -40, 1, -220)
+    chatBox.Position = UDim2.fromOffset(20, 42)
+    chatBox.BackgroundColor3 = C.card
+    chatBox.BorderSizePixel = 0
+    chatBox.Parent = panel
+    local cbc = Instance.new("UICorner")
+    cbc.CornerRadius = UDim.new(0, 16)
+    cbc.Parent = chatBox
 
     local logFrame = Instance.new("ScrollingFrame")
-    logFrame.Size = UDim2.new(1, -20, 1, -60)
-    logFrame.Position = UDim2.fromOffset(10, 50)
+    logFrame.Size = UDim2.new(1, -16, 1, -16)
+    logFrame.Position = UDim2.fromOffset(8, 8)
     logFrame.BackgroundTransparency = 1
     logFrame.BorderSizePixel = 0
     logFrame.ScrollBarThickness = 3
     logFrame.ScrollBarImageColor3 = C.accent
-    logFrame.ScrollBarImageTransparency = 0.3
+    logFrame.ScrollBarImageTransparency = 0.4
     logFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
     logFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    logFrame.ZIndex = 5
-    logFrame.Parent = leftPanel
+    logFrame.Parent = chatBox
 
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 10)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = logFrame
+    local logLayout = Instance.new("UIListLayout")
+    logLayout.Padding = UDim.new(0, 8)
+    logLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    logLayout.Parent = logFrame
 
-    local function addMessage(sender, text, color, icon)
+    local function addMessage(sender, text, color, icon2)
         local row = Instance.new("Frame")
         row.Size = UDim2.new(1, -8, 0, 0)
         row.AutomaticSize = Enum.AutomaticSize.Y
-        row.BackgroundColor3 = C.surface2
-        row.BackgroundTransparency = 1
+        row.BackgroundColor3 = C.card2
         row.BorderSizePixel = 0
         row.LayoutOrder = #logFrame:GetChildren()
-        row.ZIndex = 5
         row.Parent = logFrame
         local rc = Instance.new("UICorner")
-        rc.CornerRadius = UDim.new(0, 12)
+        rc.CornerRadius = UDim.new(0, 10)
         rc.Parent = row
-        local pad = Instance.new("UIPadding")
-        pad.PaddingTop = UDim.new(0, 9)
-        pad.PaddingBottom = UDim.new(0, 9)
-        pad.PaddingLeft = UDim.new(0, 12)
-        pad.PaddingRight = UDim.new(0, 12)
-        pad.Parent = row
+        local rp = Instance.new("UIPadding")
+        rp.PaddingTop = UDim.new(0, 8)
+        rp.PaddingBottom = UDim.new(0, 8)
+        rp.PaddingLeft = UDim.new(0, 10)
+        rp.PaddingRight = UDim.new(0, 10)
+        rp.Parent = row
 
         local head = Instance.new("TextLabel")
-        head.Size = UDim2.new(1, 0, 0, 14)
+        head.Size = UDim2.new(1, 0, 0, 12)
         head.BackgroundTransparency = 1
-        head.Text = (icon or "•") .. "  " .. sender
-        head.TextColor3 = color or C.text
-        head.TextSize = 10
+        head.Text = (icon2 or "•") .. " " .. sender
+        head.TextColor3 = color or C.dim
+        head.TextSize = 9
         head.Font = Enum.Font.GothamBold
         head.TextXAlignment = Enum.TextXAlignment.Left
-        head.ZIndex = 6
         head.Parent = row
 
         local body = Instance.new("TextLabel")
         body.Size = UDim2.new(1, 0, 0, 0)
-        body.Position = UDim2.fromOffset(0, 18)
+        body.Position = UDim2.fromOffset(0, 16)
         body.AutomaticSize = Enum.AutomaticSize.Y
         body.BackgroundTransparency = 1
-        body.Text = ""
+        body.Text = text
         body.TextColor3 = C.text
-        body.TextSize = 11
+        body.TextSize = 10
         body.Font = Enum.Font.Code
         body.TextWrapped = true
         body.TextXAlignment = Enum.TextXAlignment.Left
         body.TextYAlignment = Enum.TextYAlignment.Top
-        body.ZIndex = 6
         body.Parent = row
-
-        typewriter(body, text, 200)
-
-        TweenService:Create(row, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
-            BackgroundTransparency = 0.04
-        }):Play()
 
         task.defer(function()
             logFrame.CanvasPosition = Vector2.new(0, logFrame.AbsoluteCanvasSize.Y)
@@ -1215,670 +776,115 @@ local function createUI()
         return row
     end
 
-    -- 中栏：设置（API Key + Model + Token）
-    local midPanel = Instance.new("Frame")
-    midPanel.Size = UDim2.new(0, 220, 1, -(CONTENT_TOP + CONTENT_BOTTOM))
-    midPanel.Position = UDim2.new(1, -384, 0, CONTENT_TOP)
-    midPanel.BackgroundColor3 = C.surface
-    midPanel.BackgroundTransparency = 0.06
-    midPanel.BorderSizePixel = 0
-    midPanel.ZIndex = 4
-    midPanel.Parent = main
-    local mpc = Instance.new("UICorner")
-    mpc.CornerRadius = UDim.new(0, 16)
-    mpc.Parent = midPanel
-    local mps = Instance.new("UIStroke")
-    mps.Color = C.border
-    mps.Thickness = 1
-    mps.Transparency = 0.5
-    mps.Parent = midPanel
-    addGlassHighlight(midPanel, 16)
-
-    local midHeader = Instance.new("TextLabel")
-    midHeader.Size = UDim2.new(1, -24, 0, 22)
-    midHeader.Position = UDim2.fromOffset(12, 12)
-    midHeader.BackgroundTransparency = 1
-    midHeader.Text = "CONFIG  /  SETTINGS"
-    midHeader.TextColor3 = C.text
-    midHeader.TextSize = 11
-    midHeader.Font = Enum.Font.GothamBold
-    midHeader.TextXAlignment = Enum.TextXAlignment.Left
-    midHeader.ZIndex = 6
-    midHeader.Parent = midPanel
-
-    local midLine = Instance.new("Frame")
-    midLine.Size = UDim2.new(0, 42, 0, 2)
-    midLine.Position = UDim2.fromOffset(12, 36)
-    midLine.BackgroundColor3 = C.accent2
-    midLine.BorderSizePixel = 0
-    midLine.ZIndex = 6
-    midLine.Parent = midPanel
-
-    local midScroll = Instance.new("ScrollingFrame")
-    midScroll.Size = UDim2.new(1, -16, 1, -54)
-    midScroll.Position = UDim2.fromOffset(8, 50)
-    midScroll.BackgroundTransparency = 1
-    midScroll.BorderSizePixel = 0
-    midScroll.ScrollBarThickness = 3
-    midScroll.ScrollBarImageColor3 = C.accent
-    midScroll.ScrollBarImageTransparency = 0.3
-    midScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    midScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    midScroll.ZIndex = 5
-    midScroll.Parent = midPanel
-
-    local midLayout = Instance.new("UIListLayout")
-    midLayout.Padding = UDim.new(0, 10)
-    midLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    midLayout.Parent = midScroll
-
-    local midPad = Instance.new("UIPadding")
-    midPad.PaddingTop = UDim.new(0, 4)
-    midPad.PaddingBottom = UDim.new(0, 4)
-    midPad.PaddingLeft = UDim.new(0, 6)
-    midPad.PaddingRight = UDim.new(0, 6)
-    midPad.Parent = midScroll
-
-    -- API Key
-    local keyBlock = Instance.new("Frame")
-    keyBlock.Size = UDim2.new(1, 0, 0, 56)
-    keyBlock.BackgroundTransparency = 1
-    keyBlock.LayoutOrder = 1
-    keyBlock.ZIndex = 5
-    keyBlock.Parent = midScroll
-
-    local keyLabel = Instance.new("TextLabel")
-    keyLabel.Size = UDim2.new(1, 0, 0, 16)
-    keyLabel.BackgroundTransparency = 1
-    keyLabel.Text = "▸ API KEY"
-    keyLabel.TextColor3 = C.dim
-    keyLabel.TextSize = 10
-    keyLabel.Font = Enum.Font.GothamBold
-    keyLabel.TextXAlignment = Enum.TextXAlignment.Left
-    keyLabel.ZIndex = 6
-    keyLabel.Parent = keyBlock
-
-    local keyBox = Instance.new("TextBox")
-    keyBox.Size = UDim2.new(1, 0, 0, 34)
-    keyBox.Position = UDim2.fromOffset(0, 20)
-    keyBox.BackgroundColor3 = C.bg
-    keyBox.BackgroundTransparency = 0.2
-    keyBox.TextColor3 = C.text
-    keyBox.PlaceholderText = "sk-..."
-    keyBox.PlaceholderColor3 = C.dim2
-    keyBox.Text = CONFIG.API_KEY
-    keyBox.TextSize = 10
-    keyBox.Font = Enum.Font.Code
-    keyBox.TextXAlignment = Enum.TextXAlignment.Left
-    keyBox.ClearTextOnFocus = false
-    keyBox.BorderSizePixel = 0
-    keyBox.ZIndex = 6
-    keyBox.Parent = keyBlock
-    local kbc = Instance.new("UICorner")
-    kbc.CornerRadius = UDim.new(0, 8)
-    kbc.Parent = keyBox
-    local kbp = Instance.new("UIPadding")
-    kbp.PaddingLeft = UDim.new(0, 10)
-    kbp.PaddingRight = UDim.new(0, 10)
-    kbp.Parent = keyBox
-    local kbs = Instance.new("UIStroke")
-    kbs.Color = C.border
-    kbs.Thickness = 1
-    kbs.Transparency = 0.4
-    kbs.Parent = keyBox
-
-    keyBox.Focused:Connect(function()
-        TweenService:Create(kbs, TweenInfo.new(0.2), {Color = C.accent, Transparency = 0.2}):Play()
-    end)
-    keyBox.FocusLost:Connect(function()
-        TweenService:Create(kbs, TweenInfo.new(0.2), {Color = C.border, Transparency = 0.4}):Play()
-    end)
-
-    -- Model
-    local modelBlock = Instance.new("Frame")
-    modelBlock.Size = UDim2.new(1, 0, 0, 56)
-    modelBlock.BackgroundTransparency = 1
-    modelBlock.LayoutOrder = 2
-    modelBlock.ZIndex = 5
-    modelBlock.Parent = midScroll
-
-    local modelLabel = Instance.new("TextLabel")
-    modelLabel.Size = UDim2.new(1, 0, 0, 16)
-    modelLabel.BackgroundTransparency = 1
-    modelLabel.Text = "▸ MODEL (点击切换)"
-    modelLabel.TextColor3 = C.dim
-    modelLabel.TextSize = 10
-    modelLabel.Font = Enum.Font.GothamBold
-    modelLabel.TextXAlignment = Enum.TextXAlignment.Left
-    modelLabel.ZIndex = 6
-    modelLabel.Parent = modelBlock
-
-    local currentModelIndex = 1
-    for i, m in ipairs(MODELS) do
-        if m.name == CONFIG.MODEL then currentModelIndex = i break end
-    end
-
-    local modelBtn = Instance.new("TextButton")
-    modelBtn.Size = UDim2.new(1, 0, 0, 34)
-    modelBtn.Position = UDim2.fromOffset(0, 20)
-    modelBtn.BackgroundColor3 = C.bg
-    modelBtn.BackgroundTransparency = 0.2
-    modelBtn.Text = "  " .. MODELS[currentModelIndex].name
-    modelBtn.TextColor3 = C.text
-    modelBtn.TextSize = 10
-    modelBtn.Font = Enum.Font.Code
-    modelBtn.TextXAlignment = Enum.TextXAlignment.Left
-    modelBtn.BorderSizePixel = 0
-    modelBtn.AutoButtonColor = false
-    modelBtn.ZIndex = 6
-    modelBtn.Parent = modelBlock
-    local mbc = Instance.new("UICorner")
-    mbc.CornerRadius = UDim.new(0, 8)
-    mbc.Parent = modelBtn
-    local mbp = Instance.new("UIPadding")
-    mbp.PaddingLeft = UDim.new(0, 10)
-    mbp.Parent = modelBtn
-    local mbs = Instance.new("UIStroke")
-    mbs.Color = C.accent
-    mbs.Thickness = 1
-    mbs.Transparency = 0.6
-    mbs.Parent = modelBtn
-
-    modelBtn.MouseButton1Click:Connect(function()
-        currentModelIndex = currentModelIndex % #MODELS + 1
-        local m = MODELS[currentModelIndex]
-        CONFIG.MODEL = m.name
-        modelBtn.Text = "  " .. m.name
-        local flash = Instance.new("Frame")
-        flash.Size = UDim2.new(1, 0, 1, 0)
-        flash.BackgroundColor3 = C.accent
-        flash.BackgroundTransparency = 0.5
-        flash.BorderSizePixel = 0
-        flash.ZIndex = 10
-        flash.Parent = modelBtn
-        local fc = Instance.new("UICorner")
-        fc.CornerRadius = UDim.new(0, 8)
-        fc.Parent = flash
-        TweenService:Create(flash, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
-        task.delay(0.35, function() flash:Destroy() end)
-    end)
-
-    -- Token 限制
-    local tokenBlock = Instance.new("Frame")
-    tokenBlock.Size = UDim2.new(1, 0, 0, 130)
-    tokenBlock.BackgroundTransparency = 1
-    tokenBlock.LayoutOrder = 3
-    tokenBlock.ZIndex = 5
-    tokenBlock.Parent = midScroll
-
-    local tokenLabel = Instance.new("TextLabel")
-    tokenLabel.Size = UDim2.new(1, 0, 0, 16)
-    tokenLabel.BackgroundTransparency = 1
-    tokenLabel.Text = "▸ TOKEN 限制"
-    tokenLabel.TextColor3 = C.dim
-    tokenLabel.TextSize = 10
-    tokenLabel.Font = Enum.Font.GothamBold
-    tokenLabel.TextXAlignment = Enum.TextXAlignment.Left
-    tokenLabel.ZIndex = 6
-    tokenLabel.Parent = tokenBlock
-
-    -- 开关
-    local tokenToggle = Instance.new("TextButton")
-    tokenToggle.Size = UDim2.new(1, 0, 0, 34)
-    tokenToggle.Position = UDim2.fromOffset(0, 20)
-    tokenToggle.BackgroundColor3 = C.surface2
-    tokenToggle.BorderSizePixel = 0
-    tokenToggle.Font = Enum.Font.GothamBold
-    tokenToggle.TextSize = 11
-    tokenToggle.TextColor3 = C.dim
-    tokenToggle.Text = "  ✗  已关闭"
-    tokenToggle.TextXAlignment = Enum.TextXAlignment.Left
-    tokenToggle.AutoButtonColor = false
-    tokenToggle.ZIndex = 6
-    tokenToggle.Parent = tokenBlock
-    local ttc = Instance.new("UICorner")
-    ttc.CornerRadius = UDim.new(0, 8)
-    ttc.Parent = tokenToggle
-    local ttp = Instance.new("UIPadding")
-    ttp.PaddingLeft = UDim.new(0, 10)
-    ttp.Parent = tokenToggle
-    local tts = Instance.new("UIStroke")
-    tts.Color = C.border
-    tts.Thickness = 1
-    tts.Transparency = 0.5
-    tts.Parent = tokenToggle
-
-    local tokenDot = Instance.new("Frame")
-    tokenDot.Size = UDim2.fromOffset(8, 8)
-    tokenDot.Position = UDim2.new(1, -18, 0.5, -4)
-    tokenDot.BackgroundColor3 = C.dim2
-    tokenDot.BorderSizePixel = 0
-    tokenDot.ZIndex = 7
-    tokenDot.Parent = tokenToggle
-    local tdc = Instance.new("UICorner")
-    tdc.CornerRadius = UDim.new(1, 0)
-    tdc.Parent = tokenDot
-
-    -- 上限输入
-    local limitLabel = Instance.new("TextLabel")
-    limitLabel.Size = UDim2.new(1, 0, 0, 14)
-    limitLabel.Position = UDim2.fromOffset(0, 60)
-    limitLabel.BackgroundTransparency = 1
-    limitLabel.Text = "上下文上限 (token)"
-    limitLabel.TextColor3 = C.dim2
-    limitLabel.TextSize = 9
-    limitLabel.Font = Enum.Font.Gotham
-    limitLabel.TextXAlignment = Enum.TextXAlignment.Left
-    limitLabel.ZIndex = 6
-    limitLabel.Parent = tokenBlock
-
-    local limitBox = Instance.new("TextBox")
-    limitBox.Size = UDim2.new(1, 0, 0, 28)
-    limitBox.Position = UDim2.fromOffset(0, 76)
-    limitBox.BackgroundColor3 = C.bg
-    limitBox.BackgroundTransparency = 0.2
-    limitBox.TextColor3 = C.text
-    limitBox.Text = tostring(CONFIG.TOKEN_LIMIT)
-    limitBox.TextSize = 11
-    limitBox.Font = Enum.Font.Code
-    limitBox.TextXAlignment = Enum.TextXAlignment.Left
-    limitBox.ClearTextOnFocus = false
-    limitBox.BorderSizePixel = 0
-    limitBox.ZIndex = 6
-    limitBox.Parent = tokenBlock
-    local lbc = Instance.new("UICorner")
-    lbc.CornerRadius = UDim.new(0, 8)
-    lbc.Parent = limitBox
-    local lbp = Instance.new("UIPadding")
-    lbp.PaddingLeft = UDim.new(0, 10)
-    lbp.Parent = limitBox
-    local lbs = Instance.new("UIStroke")
-    lbs.Color = C.border
-    lbs.Thickness = 1
-    lbs.Transparency = 0.4
-    lbs.Parent = limitBox
-
-    limitBox.FocusLost:Connect(function()
-        local n = tonumber(limitBox.Text)
-        if n and n >= 500 and n <= 128000 then
-            CONFIG.TOKEN_LIMIT = n
-        else
-            limitBox.Text = tostring(CONFIG.TOKEN_LIMIT)
-        end
-    end)
-
-    -- 单次回复上限
-    local replyLabel = Instance.new("TextLabel")
-    replyLabel.Size = UDim2.new(1, 0, 0, 14)
-    replyLabel.Position = UDim2.fromOffset(0, 108)
-    replyLabel.BackgroundTransparency = 1
-    replyLabel.Text = "单次回复上限 (token)"
-    replyLabel.TextColor3 = C.dim2
-    replyLabel.TextSize = 9
-    replyLabel.Font = Enum.Font.Gotham
-    replyLabel.TextXAlignment = Enum.TextXAlignment.Left
-    replyLabel.ZIndex = 6
-    replyLabel.Parent = tokenBlock
-
-    local replyBox = Instance.new("TextBox")
-    replyBox.Size = UDim2.new(1, 0, 0, 28)
-    replyBox.Position = UDim2.fromOffset(0, 124)
-    replyBox.BackgroundColor3 = C.bg
-    replyBox.BackgroundTransparency = 0.2
-    replyBox.TextColor3 = C.text
-    replyBox.Text = tostring(CONFIG.TOKEN_PER_REPLY)
-    replyBox.TextSize = 11
-    replyBox.Font = Enum.Font.Code
-    replyBox.TextXAlignment = Enum.TextXAlignment.Left
-    replyBox.ClearTextOnFocus = false
-    replyBox.BorderSizePixel = 0
-    replyBox.ZIndex = 6
-    replyBox.Parent = tokenBlock
-    local rbc = Instance.new("UICorner")
-    rbc.CornerRadius = UDim.new(0, 8)
-    rbc.Parent = replyBox
-    local rbp = Instance.new("UIPadding")
-    rbp.PaddingLeft = UDim.new(0, 10)
-    rbp.Parent = replyBox
-    local rbs = Instance.new("UIStroke")
-    rbs.Color = C.border
-    rbs.Thickness = 1
-    rbs.Transparency = 0.4
-    rbs.Parent = replyBox
-
-    tokenBlock.Size = UDim2.new(1, 0, 0, 158)
-
-    replyBox.FocusLost:Connect(function()
-        local n = tonumber(replyBox.Text)
-        if n and n >= 100 and n <= 32000 then
-            CONFIG.TOKEN_PER_REPLY = n
-        else
-            replyBox.Text = tostring(CONFIG.TOKEN_PER_REPLY)
-        end
-    end)
-
-    local function refreshTokenToggle()
-        if CONFIG.TOKEN_LIMIT_ENABLED then
-            tokenToggle.Text = "  ✓  已开启"
-            tokenToggle.TextColor3 = C.text
-            tokenToggle.BackgroundColor3 = C.accent
-            tts.Transparency = 0.2
-            tts.Color = C.accent
-            tokenDot.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-        else
-            tokenToggle.Text = "  ✗  已关闭"
-            tokenToggle.TextColor3 = C.dim
-            tokenToggle.BackgroundColor3 = C.surface2
-            tts.Transparency = 0.5
-            tts.Color = C.border
-            tokenDot.BackgroundColor3 = C.dim2
-        end
-    end
-    refreshTokenToggle()
-
-    tokenToggle.MouseButton1Click:Connect(function()
-        CONFIG.TOKEN_LIMIT_ENABLED = not CONFIG.TOKEN_LIMIT_ENABLED
-        refreshTokenToggle()
-    end)
-
-    -- ============================================================
-    -- 右栏：推理等级
-    -- ============================================================
-    local rightPanel = Instance.new("Frame")
-    rightPanel.Size = UDim2.new(0, 168, 1, -(CONTENT_TOP + CONTENT_BOTTOM))
-    rightPanel.Position = UDim2.new(1, -180, 0, CONTENT_TOP)
-    rightPanel.BackgroundColor3 = C.surface
-    rightPanel.BackgroundTransparency = 0.06
-    rightPanel.BorderSizePixel = 0
-    rightPanel.ZIndex = 4
-    rightPanel.Parent = main
-    local rpc = Instance.new("UICorner")
-    rpc.CornerRadius = UDim.new(0, 16)
-    rpc.Parent = rightPanel
-    local rps = Instance.new("UIStroke")
-    rps.Color = C.border
-    rps.Thickness = 1
-    rps.Transparency = 0.5
-    rps.Parent = rightPanel
-    addGlassHighlight(rightPanel, 16)
-
-    local rightHeader = Instance.new("TextLabel")
-    rightHeader.Size = UDim2.new(1, -24, 0, 22)
-    rightHeader.Position = UDim2.fromOffset(12, 12)
-    rightHeader.BackgroundTransparency = 1
-    rightHeader.Text = "REASONING"
-    rightHeader.TextColor3 = C.text
-    rightHeader.TextSize = 11
-    rightHeader.Font = Enum.Font.GothamBold
-    rightHeader.TextXAlignment = Enum.TextXAlignment.Left
-    rightHeader.ZIndex = 6
-    rightHeader.Parent = rightPanel
-
-    local rightLine = Instance.new("Frame")
-    rightLine.Size = UDim2.new(0, 42, 0, 2)
-    rightLine.Position = UDim2.fromOffset(12, 36)
-    rightLine.BackgroundColor3 = C.accent2
-    rightLine.BorderSizePixel = 0
-    rightLine.ZIndex = 6
-    rightLine.Parent = rightPanel
-
-    local levelHint = Instance.new("TextLabel")
-    levelHint.Size = UDim2.new(1, -24, 0, 14)
-    levelHint.Position = UDim2.fromOffset(12, 44)
-    levelHint.BackgroundTransparency = 1
-    levelHint.Text = "点击选择推理等级"
-    levelHint.TextColor3 = C.dim2
-    levelHint.TextSize = 9
-    levelHint.Font = Enum.Font.Gotham
-    levelHint.TextXAlignment = Enum.TextXAlignment.Left
-    levelHint.ZIndex = 6
-    levelHint.Parent = rightPanel
-
-    local levelButtons = {}
-
-    local function refreshLevelButtons()
-        for i, btn in ipairs(levelButtons) do
-            local isActive = (i == currentLevel)
-            TweenService:Create(btn.frame, TweenInfo.new(0.2), {
-                BackgroundColor3 = isActive and C.accent or C.surface2,
-                BackgroundTransparency = isActive and 0.1 or 0.3,
-            }):Play()
-            TweenService:Create(btn.stroke, TweenInfo.new(0.2), {
-                Transparency = isActive and 0 or 0.6,
-                Color = isActive and C.accent2 or C.border,
-            }):Play()
-            btn.label.TextColor3 = isActive and Color3.fromRGB(255,255,255) or C.text
-            btn.desc.TextColor3 = isActive and Color3.fromRGB(220,230,255) or C.dim2
-        end
-        levelDisplay.Text = "等级: " .. REASONING_LEVELS[currentLevel].name
-    end
-
-    for i, lvl in ipairs(REASONING_LEVELS) do
-        local frame = Instance.new("TextButton")
-        frame.Size = UDim2.new(1, -24, 0, 54)
-        frame.Position = UDim2.fromOffset(12, 66 + (i-1) * 62)
-        frame.BackgroundColor3 = C.surface2
-        frame.BackgroundTransparency = 0.3
-        frame.BorderSizePixel = 0
-        frame.Text = ""
-        frame.AutoButtonColor = false
-        frame.ZIndex = 6
-        frame.Parent = rightPanel
-        local fc = Instance.new("UICorner")
-        fc.CornerRadius = UDim.new(0, 10)
-        fc.Parent = frame
-        local fs = Instance.new("UIStroke")
-        fs.Color = C.border
-        fs.Thickness = 1
-        fs.Transparency = 0.6
-        fs.Parent = frame
-
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, -16, 0, 18)
-        label.Position = UDim2.fromOffset(12, 8)
-        label.BackgroundTransparency = 1
-        label.Text = lvl.name
-        label.TextColor3 = C.text
-        label.TextSize = 14
-        label.Font = Enum.Font.GothamBold
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.ZIndex = 7
-        label.Parent = frame
-
-        local desc = Instance.new("TextLabel")
-        desc.Size = UDim2.new(1, -16, 0, 14)
-        desc.Position = UDim2.fromOffset(12, 28)
-        desc.BackgroundTransparency = 1
-        desc.Text = lvl.desc
-        desc.TextColor3 = C.dim2
-        desc.TextSize = 9
-        desc.Font = Enum.Font.Gotham
-        desc.TextXAlignment = Enum.TextXAlignment.Left
-        desc.ZIndex = 7
-        desc.Parent = frame
-
-        frame.MouseEnter:Connect(function()
-            if i ~= currentLevel then
-                TweenService:Create(frame, TweenInfo.new(0.15), {BackgroundTransparency = 0.1}):Play()
-            end
-        end)
-        frame.MouseLeave:Connect(function()
-            if i ~= currentLevel then
-                TweenService:Create(frame, TweenInfo.new(0.15), {BackgroundTransparency = 0.3}):Play()
-            end
-        end)
-        frame.MouseButton1Down:Connect(function()
-            TweenService:Create(frame, TweenInfo.new(0.08), {Size = UDim2.new(1, -28, 0, 52)}):Play()
-        end)
-        frame.MouseButton1Up:Connect(function()
-            TweenService:Create(frame, TweenInfo.new(0.12), {Size = UDim2.new(1, -24, 0, 54)}):Play()
-        end)
-
-        frame.MouseButton1Click:Connect(function()
-            currentLevel = i
-            refreshLevelButtons()
-            say("推理等级: " .. lvl.name)
-        end)
-
-        table.insert(levelButtons, {frame = frame, stroke = fs, label = label, desc = desc})
-    end
-
-    refreshLevelButtons()
-
-    -- ============================================================
-    -- 底部输入区
-    -- ============================================================
-    local inputRow = Instance.new("Frame")
-    inputRow.Size = UDim2.new(1, -48, 0, 64)
-    inputRow.Position = UDim2.new(0, 24, 1, -88)
-    inputRow.BackgroundColor3 = C.surface
-    inputRow.BackgroundTransparency = 0.04
-    inputRow.BorderSizePixel = 0
-    inputRow.ZIndex = 4
-    inputRow.Parent = main
-    local irc = Instance.new("UICorner")
-    irc.CornerRadius = UDim.new(0, 16)
-    irc.Parent = inputRow
-    local irs = Instance.new("UIStroke")
-    irs.Color = C.accent
-    irs.Thickness = 1.5
-    irs.Transparency = 0.5
-    irs.Parent = inputRow
-    addGlassHighlight(inputRow, 16)
+    -- 输入区
+    local inputBar = Instance.new("Frame")
+    inputBar.Size = UDim2.new(1, -40, 0, 56)
+    inputBar.Position = UDim2.new(0, 20, 1, -70)
+    inputBar.BackgroundColor3 = C.card
+    inputBar.BorderSizePixel = 0
+    inputBar.Parent = panel
+    local ibc = Instance.new("UICorner")
+    ibc.CornerRadius = UDim.new(1, 0)
+    ibc.Parent = inputBar
 
     local inputBox = Instance.new("TextBox")
-    inputBox.Size = UDim2.new(1, -100, 1, 0)
-    inputBox.Position = UDim2.fromOffset(24, 0)
+    inputBox.Size = UDim2.new(1, -110, 1, 0)
+    inputBox.Position = UDim2.fromOffset(20, 0)
     inputBox.BackgroundTransparency = 1
     inputBox.TextColor3 = C.text
-    inputBox.PlaceholderText = "告诉 AI 你要干什么..."
+    inputBox.PlaceholderText = "选择强度..."
     inputBox.PlaceholderColor3 = C.dim2
     inputBox.Text = ""
-    inputBox.TextSize = 14
+    inputBox.TextSize = 13
     inputBox.Font = Enum.Font.Gotham
     inputBox.TextXAlignment = Enum.TextXAlignment.Left
     inputBox.ClearTextOnFocus = false
-    inputBox.ZIndex = 6
-    inputBox.Parent = inputRow
+    inputBox.Parent = inputBar
 
-    inputBox.Focused:Connect(function()
-        TweenService:Create(irs, TweenInfo.new(0.2), {Transparency = 0.1}):Play()
-    end)
-    inputBox.FocusLost:Connect(function()
-        TweenService:Create(irs, TweenInfo.new(0.2), {Transparency = 0.5}):Play()
-    end)
+    local micBtn = Instance.new("TextButton")
+    micBtn.Size = UDim2.fromOffset(28, 28)
+    micBtn.Position = UDim2.new(1, -96, 0.5, -14)
+    micBtn.BackgroundTransparency = 1
+    micBtn.Text = "🎤"
+    micBtn.TextSize = 14
+    micBtn.AutoButtonColor = false
+    micBtn.Parent = inputBar
 
     local sendBtn = Instance.new("TextButton")
-    sendBtn.Size = UDim2.fromOffset(48, 48)
-    sendBtn.Position = UDim2.new(1, -60, 0.5, -24)
-    sendBtn.BackgroundColor3 = C.accent
+    sendBtn.Size = UDim2.fromOffset(40, 40)
+    sendBtn.Position = UDim2.new(1, -52, 0.5, -20)
+    sendBtn.BackgroundColor3 = C.blue
+    sendBtn.BorderSizePixel = 0
     sendBtn.Text = "↑"
     sendBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    sendBtn.TextSize = 20
+    sendBtn.TextSize = 18
     sendBtn.Font = Enum.Font.GothamBold
-    sendBtn.BorderSizePixel = 0
     sendBtn.AutoButtonColor = false
-    sendBtn.ZIndex = 6
-    sendBtn.Parent = inputRow
+    sendBtn.Parent = inputBar
     local sbc = Instance.new("UICorner")
     sbc.CornerRadius = UDim.new(1, 0)
     sbc.Parent = sendBtn
-    local sbgrad = Instance.new("UIGradient")
-    sbgrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, C.accent),
-        ColorSequenceKeypoint.new(1, C.accent2),
-    })
-    sbgrad.Rotation = 45
-    sbgrad.Parent = sendBtn
-    addGlow(sendBtn, C.accent, 16, 0.6)
 
-    sendBtn.MouseEnter:Connect(function()
-        TweenService:Create(sendBtn, TweenInfo.new(0.18), {Size = UDim2.fromOffset(52, 52)}):Play()
-    end)
-    sendBtn.MouseLeave:Connect(function()
-        TweenService:Create(sendBtn, TweenInfo.new(0.18), {Size = UDim2.fromOffset(48, 48)}):Play()
-    end)
-    sendBtn.MouseButton1Down:Connect(function()
-        TweenService:Create(sendBtn, TweenInfo.new(0.08), {Size = UDim2.fromOffset(44, 44)}):Play()
-    end)
-    sendBtn.MouseButton1Up:Connect(function()
-        TweenService:Create(sendBtn, TweenInfo.new(0.12), {Size = UDim2.fromOffset(48, 48)}):Play()
-    end)
+    -- 状态
+    local statusText = Instance.new("TextLabel")
+    statusText.Size = UDim2.new(1, -40, 0, 14)
+    statusText.Position = UDim2.new(0, 20, 1, -16)
+    statusText.BackgroundTransparency = 1
+    statusText.Font = Enum.Font.Gotham
+    statusText.TextSize = 10
+    statusText.TextColor3 = C.dim2
+    statusText.TextXAlignment = Enum.TextXAlignment.Left
+    statusText.Text = "ready"
+    statusText.Parent = panel
 
-    -- 复制 / 清空按钮（底部左）
-    local copyBtn = Instance.new("TextButton")
-    copyBtn.Size = UDim2.fromOffset(120, 30)
-    copyBtn.Position = UDim2.new(0, 24, 1, -122)
-    copyBtn.BackgroundColor3 = C.surface2
-    copyBtn.BackgroundTransparency = 0.3
-    copyBtn.BorderSizePixel = 0
-    copyBtn.Font = Enum.Font.GothamBold
-    copyBtn.TextSize = 11
-    copyBtn.TextColor3 = C.text
-    copyBtn.Text = "📋 复制代码"
-    copyBtn.AutoButtonColor = false
-    copyBtn.ZIndex = 6
-    copyBtn.Parent = main
-    local cbc2 = Instance.new("UICorner")
-    cbc2.CornerRadius = UDim.new(0, 8)
-    cbc2.Parent = copyBtn
-    local cbs = Instance.new("UIStroke")
-    cbs.Color = C.accent
-    cbs.Thickness = 1
-    cbs.Transparency = 0.5
-    cbs.Parent = copyBtn
+    local thinkingHolder, startThinking, stopThinking = createThinkingDots(panel)
+    thinkingHolder.Position = UDim2.new(0, 20, 1, -16)
 
-    local clearBtn = Instance.new("TextButton")
-    clearBtn.Size = UDim2.fromOffset(120, 30)
-    clearBtn.Position = UDim2.new(0, 150, 1, -122)
-    clearBtn.BackgroundColor3 = C.surface2
-    clearBtn.BackgroundTransparency = 0.3
-    clearBtn.BorderSizePixel = 0
-    clearBtn.Font = Enum.Font.GothamBold
-    clearBtn.TextSize = 11
-    clearBtn.TextColor3 = C.text
-    clearBtn.Text = "🗑 清空对话"
-    clearBtn.AutoButtonColor = false
-    clearBtn.ZIndex = 6
-    clearBtn.Parent = main
-    local clc = Instance.new("UICorner")
-    clc.CornerRadius = UDim.new(0, 8)
-    clc.Parent = clearBtn
-    local cls = Instance.new("UIStroke")
-    cls.Color = C.border
-    cls.Thickness = 1
-    cls.Transparency = 0.5
-    cls.Parent = clearBtn
+    local function say(msg)
+        stopThinking()
+        statusText.Text = msg
+        task.delay(3, function()
+            if statusText and statusText.Parent then statusText.Text = "ready" end
+        end)
+    end
 
-    clearBtn.MouseButton1Click:Connect(function()
-        for _, child in ipairs(logFrame:GetChildren()) do
-            if child:IsA("Frame") then child:Destroy() end
+    local function setThinking(msg)
+        statusText.Text = msg
+        startThinking()
+    end
+
+    -- 展开/收起
+    local expanded = false
+    local function toggle()
+        expanded = not expanded
+        local target = expanded and EXPANDED_H or CAPSULE_H
+        TweenService:Create(main, TweenInfo.new(0.35, Enum.EasingStyle.Quart), {
+            Size = UDim2.new(0, CAPSULE_W, 0, target),
+            Position = expanded
+                and UDim2.new(0.5, -CAPSULE_W/2, 0.5, -target/2 + (CAPSULE_H/2))
+                or UDim2.new(0.5, -CAPSULE_W/2, 0.5, -CAPSULE_H/2)
+        }):Play()
+        expandBtn.Text = expanded and "▴" or "▾"
+        -- 展开时重新居中
+        if expanded then
+            task.defer(function()
+                TweenService:Create(main, TweenInfo.new(0.3), {
+                    Position = UDim2.new(0.5, -CAPSULE_W/2, 0.5, -EXPANDED_H/2)
+                }):Play()
+            end)
         end
-    end)
+    end
 
-    copyBtn.MouseEnter:Connect(function()
-        TweenService:Create(copyBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0}):Play()
-        TweenService:Create(cbs, TweenInfo.new(0.15), {Transparency = 0.2}):Play()
-    end)
-    copyBtn.MouseLeave:Connect(function()
-        TweenService:Create(copyBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.3}):Play()
-        TweenService:Create(cbs, TweenInfo.new(0.15), {Transparency = 0.5}):Play()
-    end)
+    expandBtn.MouseButton1Click:Connect(toggle)
 
     return {
-        gui = gui,
-        main = main,
-        keyBox = keyBox,
-        inputBox = inputBox,
-        sendBtn = sendBtn,
-        logFrame = logFrame,
-        addMessage = addMessage,
-        copyBtn = copyBtn,
-        clearBtn = clearBtn,
-        say = say,
-        setThinking = setThinking,
-        stopThinking = stopThinking,
-        tokenDisplay = tokenDisplay,
+        gui = gui, main = main,
+        keyBox = inputBox, inputBox = inputBox, sendBtn = sendBtn,
+        logFrame = logFrame, addMessage = addMessage,
+        say = say, setThinking = setThinking, stopThinking = stopThinking,
+        sliderBg = sliderBg, sliderFill = sliderFill, sliderKnob = sliderKnob,
+        modelName = modelName, modelDesc = modelDesc,
+        currentModelIndex = 1,
         C = C,
     }
 end
@@ -1891,52 +897,27 @@ local function startAgent()
     local running = false
     local conversation = {}
     local lastCode = ""
-    local totalTokens = 0
 
     local function log(sender, text, color, icon)
         ui.addMessage(sender, text, color, icon)
     end
 
-    local function updateTokenDisplay()
-        local limit = CONFIG.TOKEN_LIMIT_ENABLED and CONFIG.TOKEN_LIMIT or 0
-        local limitStr = CONFIG.TOKEN_LIMIT_ENABLED and tostring(limit) or "∞"
-        ui.tokenDisplay.Text = "tokens: " .. totalTokens .. " / " .. limitStr
-        if CONFIG.TOKEN_LIMIT_ENABLED and totalTokens > limit * 0.85 then
-            ui.tokenDisplay.TextColor3 = C.yellow
-        elseif CONFIG.TOKEN_LIMIT_ENABLED and totalTokens > limit then
-            ui.tokenDisplay.TextColor3 = C.red
-        else
-            ui.tokenDisplay.TextColor3 = C.dim2
-        end
-    end
-
-    local function trimConversation()
-        if not CONFIG.TOKEN_LIMIT_ENABLED then return end
-        while #conversation > 2 do
-            local est = estimateMessagesTokens(conversation) + estimateTokens(buildSystemPrompt())
-            if est <= CONFIG.TOKEN_LIMIT then break end
-            table.remove(conversation, 1)
-            table.remove(conversation, 1)
-        end
-    end
-
     local function runAgent(userInput)
         if running then
-            log("系统", "上一个任务还在跑", C.yellow, "⚠")
+            log("系统", "任务进行中", C.yellow, "⚠")
             return
         end
         running = true
 
         CONFIG.API_KEY = ui.keyBox.Text
         if CONFIG.API_KEY == "" then
-            log("系统", "先填 API Key", C.red, "✕")
+            log("系统", "缺少 API Key", C.red, "✕")
             ui.say("缺少 Key")
             running = false
             return
         end
 
         table.insert(conversation, { role = "user", content = userInput })
-        trimConversation()
 
         local messages = { { role = "system", content = buildSystemPrompt() } }
         for _, m in ipairs(conversation) do
@@ -1957,21 +938,10 @@ local function startAgent()
                 return
             end
 
-            totalTokens = estimateMessagesTokens(messages) + estimateTokens(reply)
-            updateTokenDisplay()
-
-            if CONFIG.TOKEN_LIMIT_ENABLED and totalTokens > CONFIG.TOKEN_LIMIT then
-                log("系统", "已超出 token 上限，停止", C.red, "⚠")
-                ui.say("超出限制")
-                running = false
-                return
-            end
-
             table.insert(messages, { role = "assistant", content = reply })
             table.insert(conversation, { role = "assistant", content = reply })
 
             local tool, args = parseToolCall(reply)
-
             if tool and TOOLS[tool] then
                 ui.stopThinking()
                 local preview
@@ -1998,7 +968,8 @@ local function startAgent()
                 if extracted then
                     lastCode = extracted
                     log("AI", extracted:sub(1, 200), C.accent, "📋")
-                    ui.say("已提取代码，点复制")
+                    if setclipboard then setclipboard(extracted) end
+                    ui.say("已复制代码")
                 else
                     log("AI", reply, C.text, "●")
                     ui.say("ready")
@@ -2009,23 +980,10 @@ local function startAgent()
         end
 
         ui.stopThinking()
-        log("系统", "达到循环上限", C.yellow, "⚠")
+        log("系统", "达到上限", C.yellow, "⚠")
         ui.say("达到上限")
         running = false
     end
-
-    ui.copyBtn.MouseButton1Click:Connect(function()
-        if lastCode == "" then
-            log("系统", "还没有可复制的代码", C.yellow, "⚠")
-            return
-        end
-        if setclipboard then
-            setclipboard(lastCode)
-            log("系统", "已复制到剪贴板 (" .. #lastCode .. " 字符)", C.green, "✓")
-        else
-            log("系统", "当前环境没有 setclipboard", C.red, "✕")
-        end
-    end)
 
     ui.sendBtn.MouseButton1Click:Connect(function()
         local text = ui.inputBox.Text
@@ -2039,8 +997,7 @@ local function startAgent()
         if enter then ui.sendBtn:Fire() end
     end)
 
-    updateTokenDisplay()
-    log("系统", "AI 控制中心已启动 · 等待指令", C.green, "✓")
+    log("系统", "就绪", C.green, "✓")
     ui.say("ready")
 end
 
