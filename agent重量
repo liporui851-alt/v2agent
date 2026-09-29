@@ -1,5 +1,5 @@
 --!nonstrict
--- Codex Interface — DeepSeek Agent (Fat Slider + 3 Themes)
+-- Codex Interface — DeepSeek Agent (3 Themes + Thick Slider)
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -22,6 +22,7 @@ local CONFIG = {
     TOKEN_LIMIT         = 8000,
     TOKEN_PER_REPLY     = 2000,
     AUTO_EXECUTE        = false,
+    THEME               = "translucent", -- "translucent" | "white" | "dark"
 }
 
 local MODELS = {
@@ -40,6 +41,76 @@ local REASONING_LEVELS = {
 local PURPLE        = Color3.fromRGB(180, 130, 255)
 local PURPLE_BRIGHT = Color3.fromRGB(220, 170, 255)
 local PURPLE_DARK   = Color3.fromRGB(130, 80, 220)
+
+-- ============================================================
+-- 三套主题
+-- ============================================================
+local THEMES = {
+    translucent = {
+        canvas      = Color3.fromRGB(9, 11, 17),
+        shell       = Color3.fromRGB(18, 21, 31),
+        sidebar     = Color3.fromRGB(14, 17, 26),
+        panel       = Color3.fromRGB(24, 28, 41),
+        panelRaised = Color3.fromRGB(33, 38, 55),
+        border      = Color3.fromRGB(64, 72, 96),
+        muted       = Color3.fromRGB(151, 161, 184),
+        text        = Color3.fromRGB(241, 244, 252),
+        accent      = Color3.fromRGB(122, 150, 255),
+        accentBright= Color3.fromRGB(169, 188, 255),
+        green       = Color3.fromRGB(108, 211, 157),
+        orange      = Color3.fromRGB(255, 180, 102),
+        danger      = Color3.fromRGB(255, 113, 113),
+        shellTransparency = 0.02,
+        panelTransparency = 0.04,
+        backdropTop = Color3.fromRGB(8, 10, 18),
+        backdropBottom = Color3.fromRGB(21, 24, 42),
+    },
+    white = {
+        canvas      = Color3.fromRGB(245, 246, 250),
+        shell       = Color3.fromRGB(255, 255, 255),
+        sidebar     = Color3.fromRGB(248, 249, 252),
+        panel       = Color3.fromRGB(255, 255, 255),
+        panelRaised = Color3.fromRGB(240, 242, 247),
+        border      = Color3.fromRGB(210, 214, 224),
+        muted       = Color3.fromRGB(130, 138, 155),
+        text        = Color3.fromRGB(24, 28, 38),
+        accent      = Color3.fromRGB(90, 120, 240),
+        accentBright= Color3.fromRGB(120, 150, 255),
+        green       = Color3.fromRGB(60, 180, 120),
+        orange      = Color3.fromRGB(230, 150, 60),
+        danger      = Color3.fromRGB(230, 80, 90),
+        shellTransparency = 0,
+        panelTransparency = 0,
+        backdropTop = Color3.fromRGB(235, 238, 245),
+        backdropBottom = Color3.fromRGB(215, 220, 232),
+    },
+    dark = {
+        canvas      = Color3.fromRGB(22, 22, 24),
+        shell       = Color3.fromRGB(38, 38, 42),
+        sidebar     = Color3.fromRGB(30, 30, 34),
+        panel       = Color3.fromRGB(46, 46, 52),
+        panelRaised = Color3.fromRGB(58, 58, 66),
+        border      = Color3.fromRGB(80, 80, 90),
+        muted       = Color3.fromRGB(150, 150, 160),
+        text        = Color3.fromRGB(235, 235, 240),
+        accent      = Color3.fromRGB(140, 150, 200),
+        accentBright= Color3.fromRGB(180, 190, 240),
+        green       = Color3.fromRGB(110, 200, 150),
+        orange      = Color3.fromRGB(230, 180, 100),
+        danger      = Color3.fromRGB(240, 110, 120),
+        shellTransparency = 0,
+        panelTransparency = 0,
+        backdropTop = Color3.fromRGB(20, 20, 22),
+        backdropBottom = Color3.fromRGB(30, 30, 34),
+    },
+}
+
+local COLORS = THEMES[CONFIG.THEME]
+
+local function applyTheme(name)
+    CONFIG.THEME = name
+    COLORS = THEMES[name]
+end
 
 local BASE_PROMPT = [[
 你是 Roblox Luau Agent，运行在执行器环境中。你的唯一目标是：用最少的步骤，把用户交代的事做完。
@@ -254,22 +325,6 @@ RunService.Heartbeat:Connect(function(dt)
     end
 end)
 
-local COLORS = {
-    canvas      = Color3.fromRGB(9, 11, 17),
-    shell       = Color3.fromRGB(18, 21, 31),
-    sidebar     = Color3.fromRGB(14, 17, 26),
-    panel       = Color3.fromRGB(24, 28, 41),
-    panelRaised = Color3.fromRGB(33, 38, 55),
-    border      = Color3.fromRGB(64, 72, 96),
-    muted       = Color3.fromRGB(151, 161, 184),
-    text        = Color3.fromRGB(241, 244, 252),
-    accent      = Color3.fromRGB(122, 150, 255),
-    accentBright= Color3.fromRGB(169, 188, 255),
-    green       = Color3.fromRGB(108, 211, 157),
-    orange      = Color3.fromRGB(255, 180, 102),
-    danger      = Color3.fromRGB(255, 113, 113),
-}
-
 local function new(className, properties)
     local object = Instance.new(className)
     if properties then
@@ -462,7 +517,7 @@ local function buildInterface()
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1), Parent = gui,
     })
-    gradient(backdrop, Color3.fromRGB(8, 10, 18), Color3.fromRGB(21, 24, 42), 25)
+    local backdropGradient = gradient(backdrop, COLORS.backdropTop, COLORS.backdropBottom, 25)
 
     local shellShadow = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 8),
@@ -475,19 +530,23 @@ local function buildInterface()
     local shell = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
         Size = UDim2.fromOffset(720, 480),
-        BackgroundColor3 = COLORS.shell, BorderSizePixel = 0,
+        BackgroundColor3 = COLORS.shell,
+        BackgroundTransparency = COLORS.shellTransparency,
+        BorderSizePixel = 0,
         ClipsDescendants = true, Active = true, Parent = backdrop,
     })
     corner(shell, 12)
     stroke(shell, COLORS.border, 0.2, 1)
-    gradient(shell, COLORS.shell, Color3.fromRGB(24, 28, 42), 90)
+    local shellGradient = gradient(shell, COLORS.shell, COLORS.panel, 90)
 
     local topbar = new("Frame", {
-        BackgroundColor3 = COLORS.shell, BorderSizePixel = 0,
+        BackgroundColor3 = COLORS.shell,
+        BackgroundTransparency = COLORS.shellTransparency,
+        BorderSizePixel = 0,
         Size = UDim2.new(1, 0, 0, 44), Parent = shell,
     })
     padding(topbar, 14, 14, 0, 0)
-    gradient(topbar, Color3.fromRGB(26, 30, 47), COLORS.shell, 0)
+    local topbarGradient = gradient(topbar, COLORS.panel, COLORS.shell, 0)
 
     new("Frame", {
         BackgroundColor3 = COLORS.accent, BackgroundTransparency = 0.35,
@@ -574,11 +633,13 @@ local function buildInterface()
 
     local SIDEBAR_W = 180
     local sidebar = new("Frame", {
-        BackgroundColor3 = COLORS.sidebar, BorderSizePixel = 0,
+        BackgroundColor3 = COLORS.sidebar,
+        BackgroundTransparency = COLORS.shellTransparency,
+        BorderSizePixel = 0,
         Size = UDim2.new(0, SIDEBAR_W, 1, 0), Parent = body,
     })
     padding(sidebar, 10, 10, 10, 10)
-    gradient(sidebar, Color3.fromRGB(18, 22, 35), COLORS.sidebar, 90)
+    local sidebarGradient = gradient(sidebar, COLORS.panel, COLORS.sidebar, 90)
 
     local newTaskButton = button(sidebar, "+  新建任务", {
         Size = UDim2.new(1, 0, 0, 32),
@@ -618,21 +679,20 @@ local function buildInterface()
     padding(settingsButton, 6, 0, 0, 0)
 
     local main = new("Frame", {
-        BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
+        BackgroundColor3 = COLORS.canvas,
+        BackgroundTransparency = COLORS.shellTransparency,
+        BorderSizePixel = 0,
         Position = UDim2.fromOffset(SIDEBAR_W, 0),
         Size = UDim2.new(1, -SIDEBAR_W, 1, 0), Parent = body,
     })
-    gradient(main, Color3.fromRGB(11, 14, 24), COLORS.canvas, 90)
+    local mainGradient = gradient(main, COLORS.canvas, COLORS.canvas, 90)
 
-    -- ============================================================
-    -- Header
-    -- ============================================================
     local header = new("Frame", {
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         Size = UDim2.new(1, 0, 0, 46), Parent = main,
     })
     padding(header, 16, 16, 0, 0)
-    gradient(header, Color3.fromRGB(14, 18, 31), COLORS.canvas, 0)
+    gradient(header, COLORS.canvas, COLORS.canvas, 0)
 
     local collapseButton = button(header, "☰", {
         Size = UDim2.fromOffset(26, 26), Position = UDim2.fromOffset(0, 10),
@@ -675,64 +735,13 @@ local function buildInterface()
     })
     corner(modelMenu, 8)
     stroke(modelMenu, COLORS.border, 0.1, 1)
-    gradient(modelMenu, Color3.fromRGB(32, 37, 55), COLORS.panel, 90)
+    gradient(modelMenu, COLORS.panelRaised, COLORS.panel, 90)
     padding(modelMenu, 6, 6, 6, 6)
     new("UIListLayout", {Padding = UDim.new(0, 4), Parent = modelMenu})
 
     -- ============================================================
-    -- 推理等级滑动条（胖版 + 3 主题）
+    -- 推理等级滑动条（主界面，加粗，圆点包在里面）
     -- ============================================================
-    local THEMES = {
-        glass = {
-            name = "半透明",
-            track       = Color3.fromRGB(28, 32, 46),
-            trackTrans  = 0.35,
-            fill        = COLORS.accent,
-            fillTrans   = 0.25,
-            knob        = Color3.fromRGB(255, 255, 255),
-            knobTrans   = 0.55,
-            tick        = Color3.fromRGB(255, 255, 255),
-            tickTrans   = 0.65,
-            supreme     = PURPLE,
-            supremeTrans= 0.2,
-            supremeKnob = PURPLE_BRIGHT,
-            label       = COLORS.accentBright,
-        },
-        white = {
-            name = "白色",
-            track       = Color3.fromRGB(245, 248, 255),
-            trackTrans  = 0,
-            fill        = Color3.fromRGB(122, 150, 255),
-            fillTrans   = 0,
-            knob        = Color3.fromRGB(255, 255, 255),
-            knobTrans   = 0,
-            tick        = Color3.fromRGB(180, 195, 220),
-            tickTrans   = 0.2,
-            supreme     = Color3.fromRGB(180, 130, 255),
-            supremeTrans= 0,
-            supremeKnob = Color3.fromRGB(255, 255, 255),
-            label       = Color3.fromRGB(255, 255, 255),
-        },
-        dark = {
-            name = "黑灰",
-            track       = Color3.fromRGB(20, 22, 30),
-            trackTrans  = 0,
-            fill        = Color3.fromRGB(96, 104, 122),
-            fillTrans   = 0,
-            knob        = Color3.fromRGB(180, 188, 204),
-            knobTrans   = 0,
-            tick        = Color3.fromRGB(70, 78, 96),
-            tickTrans   = 0.1,
-            supreme     = Color3.fromRGB(150, 110, 220),
-            supremeTrans= 0,
-            supremeKnob = Color3.fromRGB(200, 180, 255),
-            label       = Color3.fromRGB(200, 210, 225),
-        },
-    }
-
-    local currentThemeId = "glass"
-    local currentTheme = THEMES[currentThemeId]
-
     local levelBar = new("Frame", {
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
@@ -759,72 +768,37 @@ local function buildInterface()
         ZIndex = 6,
     })
 
-    local themeBtn = button(levelBar, "◐", {
-        AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -20, 0, 6),
-        Size = UDim2.fromOffset(28, 20),
-        BackgroundColor3 = COLORS.panel,
-        TextColor3 = COLORS.muted,
-        TextSize = 12,
-        ZIndex = 6,
-    })
-
-    local themeNameLabel = label(levelBar, currentTheme.name, 9, COLORS.muted, Enum.Font.GothamMedium, {
-        AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -52, 0, 8),
-        Size = UDim2.fromOffset(60, 16),
-        TextXAlignment = Enum.TextXAlignment.Right,
-        ZIndex = 6,
-    })
-
     local levelValueText = label(levelBar, REASONING_LEVELS[currentLevel].name, 11, COLORS.accentBright, Enum.Font.GothamBold, {
         AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -120, 0, 6),
+        Position = UDim2.new(1, -20, 0, 6),
         Size = UDim2.fromOffset(100, 18),
         TextXAlignment = Enum.TextXAlignment.Right,
         ZIndex = 6,
     })
 
+    -- 轨道加粗：高 22，圆点 18 包在里面
     local levelSlider = new("Frame", {
         Position = UDim2.fromOffset(40, 36),
         Size = UDim2.new(1, -80, 0, 22),
-        BackgroundColor3 = currentTheme.track,
-        BackgroundTransparency = currentTheme.trackTrans,
+        BackgroundColor3 = COLORS.panelRaised,
         BorderSizePixel = 0,
         Active = true,
+        ClipsDescendants = false,
         ZIndex = 6,
         Parent = levelBar,
     })
     corner(levelSlider, 11)
-    local levelTrackStroke = stroke(levelSlider, COLORS.border, 0.4, 1)
+    local levelTrackStroke = stroke(levelSlider, COLORS.border, 0.35, 1)
 
     local levelFill = new("Frame", {
         Size = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 1, 0),
-        BackgroundColor3 = currentTheme.fill,
-        BackgroundTransparency = currentTheme.fillTrans,
+        BackgroundColor3 = COLORS.accent,
         BorderSizePixel = 0,
         ZIndex = 7,
         Parent = levelSlider,
     })
     corner(levelFill, 11)
     local levelFillGradient = gradient(levelFill, COLORS.accentBright, COLORS.accent, 0)
-
-    local levelTicks = {}
-    for i = 1, #REASONING_LEVELS do
-        local progress = (i - 1) / (#REASONING_LEVELS - 1)
-        local tick = new("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(progress, 0, 0.5, 0),
-            Size = UDim2.fromOffset(8, 8),
-            BackgroundColor3 = currentTheme.tick,
-            BackgroundTransparency = currentTheme.tickTrans,
-            BorderSizePixel = 0,
-            ZIndex = 9,
-            Parent = levelSlider,
-        })
-        corner(tick, 4)
-        table.insert(levelTicks, tick)
-    end
 
     local particleLayer = new("Frame", {
         BackgroundTransparency = 1,
@@ -838,7 +812,7 @@ local function buildInterface()
     corner(particleLayer, 11)
 
     local levelParticles = {}
-    for i = 1, 24 do
+    for i = 1, 20 do
         local psize = (i % 4 == 0) and 4 or (i % 3 == 0 and 3 or 2)
         local particle = new("Frame", {
             BackgroundColor3 = PURPLE_BRIGHT,
@@ -851,7 +825,7 @@ local function buildInterface()
         corner(particle, 3)
         table.insert(levelParticles, {
             node = particle,
-            seed = i / 24,
+            seed = i / 20,
             speed = 0.06 + (i % 5) * 0.025,
             wave = i * 0.65,
         })
@@ -863,7 +837,7 @@ local function buildInterface()
         if not visible then return end
         for _, particle in ipairs(levelParticles) do
             local phase = (t * particle.speed + particle.seed) % 1
-            local y = 0.5 + math.sin(t * 2.8 + particle.wave) * 0.32
+            local y = 0.5 + math.sin(t * 2.8 + particle.wave) * 0.28
             particle.node.Position = UDim2.new(phase, -2, y, -2)
             local alpha = 0.08 + math.abs(math.sin(t * 3 + particle.wave)) * 0.75
             particle.node.BackgroundTransparency = alpha
@@ -874,25 +848,24 @@ local function buildInterface()
         end
     end)
 
-    local levelKnob = new("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 0.5, 0),
-        Size = UDim2.fromOffset(26, 26),
-        BackgroundColor3 = currentTheme.knob,
-        BackgroundTransparency = currentTheme.knobTrans,
-        BorderSizePixel = 0,
-        Active = true,
-        ZIndex = 11,
-        Parent = levelSlider,
-    })
-    corner(levelKnob, 13)
-    local levelKnobStroke = stroke(levelKnob, currentTheme.knob, 0.15, 1.5)
-
     local levelLabels = {}
     for i, level in ipairs(REASONING_LEVELS) do
         local progress = (i - 1) / (#REASONING_LEVELS - 1)
+
+        local tick = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(progress, 0, 0.5, 0),
+            Size = UDim2.fromOffset(5, 5),
+            BackgroundColor3 = COLORS.text,
+            BackgroundTransparency = 0.4,
+            BorderSizePixel = 0,
+            ZIndex = 9,
+            Parent = levelSlider,
+        })
+        corner(tick, 3)
+
         local levelLabel = label(levelBar, level.name, 9,
-            i == currentLevel and currentTheme.label or COLORS.muted,
+            i == currentLevel and COLORS.accentBright or COLORS.muted,
             Enum.Font.GothamMedium, {
                 AnchorPoint = Vector2.new(0.5, 0),
                 Position = UDim2.new(progress, 40 - progress * 80, 0, 64),
@@ -903,37 +876,21 @@ local function buildInterface()
         table.insert(levelLabels, levelLabel)
     end
 
+    -- knob 18x18，包在 22 高的轨道里
+    local levelKnob = new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 0.5, 0),
+        Size = UDim2.fromOffset(18, 18),
+        BackgroundColor3 = COLORS.accentBright,
+        BorderSizePixel = 0,
+        Active = true,
+        ZIndex = 10,
+        Parent = levelSlider,
+    })
+    corner(levelKnob, 9)
+    local levelKnobStroke = stroke(levelKnob, COLORS.text, 0.25, 1)
+
     local levelDragging = false
-
-    local function applyTheme(themeId, animate)
-        currentThemeId = themeId
-        currentTheme = THEMES[themeId]
-        local info = TweenInfo.new(animate and 0.22 or 0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        local isSupreme = currentLevel == #REASONING_LEVELS
-
-        TweenService:Create(levelSlider, info, {
-            BackgroundColor3 = currentTheme.track,
-            BackgroundTransparency = currentTheme.trackTrans,
-        }):Play()
-        TweenService:Create(levelFill, info, {
-            BackgroundColor3 = isSupreme and currentTheme.supreme or currentTheme.fill,
-            BackgroundTransparency = isSupreme and currentTheme.supremeTrans or currentTheme.fillTrans,
-        }):Play()
-        TweenService:Create(levelKnob, info, {
-            BackgroundColor3 = isSupreme and currentTheme.supremeKnob or currentTheme.knob,
-            BackgroundTransparency = currentTheme.knobTrans,
-        }):Play()
-        TweenService:Create(levelKnobStroke, info, {
-            Color = isSupreme and currentTheme.supremeKnob or currentTheme.knob,
-        }):Play()
-        for _, tick in ipairs(levelTicks) do
-            TweenService:Create(tick, info, {
-                BackgroundColor3 = currentTheme.tick,
-                BackgroundTransparency = currentTheme.tickTrans,
-            }):Play()
-        end
-        themeNameLabel.Text = currentTheme.name
-    end
 
     local function setLevel(index, announce)
         currentLevel = math.clamp(index, 1, #REASONING_LEVELS)
@@ -943,25 +900,37 @@ local function buildInterface()
 
         TweenService:Create(levelFill, tweenInfo, {
             Size = UDim2.new(progress, 0, 1, 0),
-            BackgroundColor3 = isSupreme and currentTheme.supreme or currentTheme.fill,
-            BackgroundTransparency = isSupreme and currentTheme.supremeTrans or currentTheme.fillTrans,
         }):Play()
         TweenService:Create(levelKnob, tweenInfo, {
             Position = UDim2.new(progress, 0, 0.5, 0),
-            BackgroundColor3 = isSupreme and currentTheme.supremeKnob or currentTheme.knob,
-        }):Play()
-        TweenService:Create(levelKnobStroke, tweenInfo, {
-            Color = isSupreme and currentTheme.supremeKnob or currentTheme.knob,
-        }):Play()
-        TweenService:Create(levelTrackStroke, tweenInfo, {
-            Color = isSupreme and currentTheme.supreme or COLORS.border,
         }):Play()
 
+        if isSupreme then
+            TweenService:Create(levelFill, tweenInfo, {BackgroundColor3 = PURPLE}):Play()
+            TweenService:Create(levelKnob, tweenInfo, {BackgroundColor3 = PURPLE_BRIGHT}):Play()
+            TweenService:Create(levelTrackStroke, tweenInfo, {Color = PURPLE}):Play()
+            TweenService:Create(levelKnobStroke, tweenInfo, {Color = PURPLE_BRIGHT}):Play()
+            levelFillGradient.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, PURPLE_BRIGHT),
+                ColorSequenceKeypoint.new(1, PURPLE_DARK),
+            })
+            levelValueText.TextColor3 = PURPLE_BRIGHT
+        else
+            TweenService:Create(levelFill, tweenInfo, {BackgroundColor3 = COLORS.accent}):Play()
+            TweenService:Create(levelKnob, tweenInfo, {BackgroundColor3 = COLORS.accentBright}):Play()
+            TweenService:Create(levelTrackStroke, tweenInfo, {Color = COLORS.border}):Play()
+            TweenService:Create(levelKnobStroke, tweenInfo, {Color = COLORS.text}):Play()
+            levelFillGradient.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, COLORS.accentBright),
+                ColorSequenceKeypoint.new(1, COLORS.accent),
+            })
+            levelValueText.TextColor3 = COLORS.accentBright
+        end
+
         levelValueText.Text = REASONING_LEVELS[currentLevel].name
-        levelValueText.TextColor3 = isSupreme and PURPLE_BRIGHT or currentTheme.label
         for i, item in ipairs(levelLabels) do
             item.TextColor3 = (i == currentLevel)
-                and (isSupreme and PURPLE_BRIGHT or currentTheme.label)
+                and (isSupreme and PURPLE_BRIGHT or COLORS.accentBright)
                 or COLORS.muted
         end
 
@@ -1005,19 +974,6 @@ local function buildInterface()
             levelDragging = false
             setLevel(currentLevel, true)
         end
-    end)
-
-    themeBtn.MouseButton1Click:Connect(function()
-        local order = {"glass", "white", "dark"}
-        local nextIndex = 1
-        for i, id in ipairs(order) do
-            if id == currentThemeId then
-                nextIndex = i % #order + 1
-                break
-            end
-        end
-        applyTheme(order[nextIndex], true)
-        showToast("主题: " .. THEMES[order[nextIndex]].name)
     end)
 
     -- ============================================================
@@ -1077,12 +1033,12 @@ local function buildInterface()
         })
         corner(codeFrame, 6)
         stroke(codeFrame, COLORS.border, 0.25, 1)
-        gradient(codeFrame, Color3.fromRGB(15, 19, 31), Color3.fromRGB(10, 13, 22), 90)
+        gradient(codeFrame, COLORS.panel, COLORS.canvas, 90)
         padding(codeFrame, 8, 8, 24, 8)
 
         new("TextLabel", {
             BackgroundTransparency = 1, Text = code,
-            TextColor3 = Color3.fromRGB(205, 220, 238), TextSize = 10,
+            TextColor3 = COLORS.text, TextSize = 10,
             Font = Enum.Font.Code, TextWrapped = true,
             TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
             Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
@@ -1154,12 +1110,12 @@ local function buildInterface()
         })
         corner(bodyFrame, 8)
         stroke(bodyFrame, COLORS.border, 0.4, 1)
-        gradient(bodyFrame, Color3.fromRGB(31, 36, 53), COLORS.panel, 90)
+        gradient(bodyFrame, COLORS.panelRaised, COLORS.panel, 90)
         padding(bodyFrame, 10, 10, 8, 8)
 
         new("TextLabel", {
             BackgroundTransparency = 1, Text = args:sub(1, 200),
-            TextColor3 = Color3.fromRGB(205, 220, 238), TextSize = 9,
+            TextColor3 = COLORS.text, TextSize = 9,
             Font = Enum.Font.Code, TextWrapped = true,
             TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
             Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
@@ -1235,7 +1191,7 @@ local function buildInterface()
             stroke(bodyFrame, COLORS.border, 0.45, 1)
         end
         if not isUser then
-            gradient(bodyFrame, Color3.fromRGB(23, 27, 40), COLORS.shell, 90)
+            gradient(bodyFrame, COLORS.panel, COLORS.shell, 90)
         end
         padding(bodyFrame, 10, 10, 8, 8)
 
@@ -1317,12 +1273,14 @@ local function buildInterface()
     local composer = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -14),
         Size = UDim2.new(1, -32, 0, 76),
-        BackgroundColor3 = COLORS.panel, BorderSizePixel = 0,
+        BackgroundColor3 = COLORS.panel,
+        BackgroundTransparency = COLORS.panelTransparency,
+        BorderSizePixel = 0,
         Parent = main,
     })
     corner(composer, 10)
     stroke(composer, COLORS.border, 0.1, 1)
-    gradient(composer, Color3.fromRGB(31, 36, 55), COLORS.panel, 90)
+    gradient(composer, COLORS.panelRaised, COLORS.panel, 90)
 
     promptBox = new("TextBox", {
         PlaceholderText = "让 Codex 构建、调试、解释...",
@@ -1596,17 +1554,17 @@ local function buildInterface()
     })
 
     -- ============================================================
-    -- 设置面板
+    -- 设置面板（含主题切换）
     -- ============================================================
     local settingsPanel = new("Frame", {
         Visible = false, AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(440, 300),
+        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(440, 340),
         BackgroundColor3 = COLORS.panel, BorderSizePixel = 0,
         ZIndex = 50, Parent = gui,
     })
     corner(settingsPanel, 12)
     stroke(settingsPanel, COLORS.border, 0.1, 1)
-    gradient(settingsPanel, Color3.fromRGB(32, 37, 55), COLORS.panel, 90)
+    gradient(settingsPanel, COLORS.panelRaised, COLORS.panel, 90)
 
     new("Frame", {
         BackgroundColor3 = COLORS.accent, BackgroundTransparency = 0.15,
@@ -1623,11 +1581,39 @@ local function buildInterface()
         TextColor3 = COLORS.muted, TextSize = 16, ZIndex = 51,
     })
 
-    label(settingsPanel, "API KEY", 9, COLORS.muted, Enum.Font.GothamBold, {
+    -- 主题切换
+    label(settingsPanel, "UI 主题", 9, COLORS.muted, Enum.Font.GothamBold, {
         Position = UDim2.fromOffset(16, 50), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
+    local themeButtons = {}
+    local themeOrder = {"translucent", "white", "dark"}
+    local themeLabels = {"半透明", "白色", "黑灰"}
+    for i, key in ipairs(themeOrder) do
+        local b = button(settingsPanel, themeLabels[i], {
+            Position = UDim2.fromOffset(16 + (i-1) * 100, 66),
+            Size = UDim2.fromOffset(92, 30),
+            BackgroundColor3 = (CONFIG.THEME == key) and COLORS.accent or COLORS.panelRaised,
+            TextColor3 = (CONFIG.THEME == key) and COLORS.canvas or COLORS.text,
+            TextSize = 11, Font = Enum.Font.GothamBold, ZIndex = 51,
+        })
+        b.MouseButton1Click:Connect(function()
+            if CONFIG.THEME == key then return end
+            applyTheme(key)
+            for j, other in ipairs(themeButtons) do
+                other.BackgroundColor3 = (themeOrder[j] == key) and COLORS.accent or COLORS.panelRaised
+                other.TextColor3 = (themeOrder[j] == key) and COLORS.canvas or COLORS.text
+            end
+            applyThemeColors()
+            showToast("主题: " .. themeLabels[i])
+        end)
+        table.insert(themeButtons, b)
+    end
+
+    label(settingsPanel, "API KEY", 9, COLORS.muted, Enum.Font.GothamBold, {
+        Position = UDim2.fromOffset(16, 108), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
+    })
     local keyInput = new("TextBox", {
-        Position = UDim2.fromOffset(16, 66), Size = UDim2.new(1, -32, 0, 32),
+        Position = UDim2.fromOffset(16, 124), Size = UDim2.new(1, -32, 0, 32),
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         PlaceholderText = "sk-...", PlaceholderColor3 = COLORS.muted,
         Text = CONFIG.API_KEY, TextColor3 = COLORS.text, TextSize = 10,
@@ -1642,10 +1628,10 @@ local function buildInterface()
     end)
 
     label(settingsPanel, "TOKEN 限制", 9, COLORS.muted, Enum.Font.GothamBold, {
-        Position = UDim2.fromOffset(16, 108), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
+        Position = UDim2.fromOffset(16, 166), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local tokenToggle = button(settingsPanel, "", {
-        Position = UDim2.fromOffset(16, 124), Size = UDim2.fromOffset(38, 20),
+        Position = UDim2.fromOffset(16, 182), Size = UDim2.fromOffset(38, 20),
         BackgroundColor3 = COLORS.border, ZIndex = 51,
     })
     corner(tokenToggle, 10)
@@ -1656,7 +1642,7 @@ local function buildInterface()
     })
     corner(tokenKnob, 7)
     label(settingsPanel, "启用 Token 限制", 11, COLORS.text, Enum.Font.GothamMedium, {
-        Position = UDim2.fromOffset(62, 122), Size = UDim2.fromOffset(200, 20), ZIndex = 51,
+        Position = UDim2.fromOffset(62, 180), Size = UDim2.fromOffset(200, 20), ZIndex = 51,
     })
     tokenToggle.MouseButton1Click:Connect(function()
         CONFIG.TOKEN_LIMIT_ENABLED = not CONFIG.TOKEN_LIMIT_ENABLED
@@ -1671,10 +1657,10 @@ local function buildInterface()
     end)
 
     label(settingsPanel, "上下文上限", 9, COLORS.muted, Enum.Font.GothamBold, {
-        Position = UDim2.fromOffset(16, 152), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
+        Position = UDim2.fromOffset(200, 166), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local limitInput = new("TextBox", {
-        Position = UDim2.fromOffset(16, 168), Size = UDim2.new(0, 160, 0, 28),
+        Position = UDim2.fromOffset(200, 182), Size = UDim2.new(0, 160, 0, 28),
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         Text = tostring(CONFIG.TOKEN_LIMIT), TextColor3 = COLORS.text,
         TextSize = 10, Font = Enum.Font.Code, ClearTextOnFocus = false,
@@ -1694,10 +1680,10 @@ local function buildInterface()
     end)
 
     label(settingsPanel, "自动执行", 9, COLORS.muted, Enum.Font.GothamBold, {
-        Position = UDim2.fromOffset(200, 108), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
+        Position = UDim2.fromOffset(16, 220), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local autoToggle = button(settingsPanel, "", {
-        Position = UDim2.fromOffset(200, 124), Size = UDim2.fromOffset(38, 20),
+        Position = UDim2.fromOffset(16, 236), Size = UDim2.fromOffset(38, 20),
         BackgroundColor3 = COLORS.border, ZIndex = 51,
     })
     corner(autoToggle, 10)
@@ -1708,7 +1694,7 @@ local function buildInterface()
     })
     corner(autoKnob, 7)
     label(settingsPanel, "AI 返回代码直接执行", 11, COLORS.text, Enum.Font.GothamMedium, {
-        Position = UDim2.fromOffset(246, 122), Size = UDim2.fromOffset(200, 20), ZIndex = 51,
+        Position = UDim2.fromOffset(62, 234), Size = UDim2.fromOffset(200, 20), ZIndex = 51,
     })
     autoToggle.MouseButton1Click:Connect(function()
         CONFIG.AUTO_EXECUTE = not CONFIG.AUTO_EXECUTE
@@ -1724,10 +1710,10 @@ local function buildInterface()
     end)
 
     label(settingsPanel, "单次回复上限", 9, COLORS.muted, Enum.Font.GothamBold, {
-        Position = UDim2.fromOffset(200, 152), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
+        Position = UDim2.fromOffset(200, 220), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local replyInput = new("TextBox", {
-        Position = UDim2.fromOffset(200, 168), Size = UDim2.new(0, 160, 0, 28),
+        Position = UDim2.fromOffset(200, 236), Size = UDim2.new(0, 160, 0, 28),
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         Text = tostring(CONFIG.TOKEN_PER_REPLY), TextColor3 = COLORS.text,
         TextSize = 10, Font = Enum.Font.Code, ClearTextOnFocus = false,
@@ -1747,12 +1733,12 @@ local function buildInterface()
 
     new("Frame", {
         BackgroundColor3 = COLORS.border, BackgroundTransparency = 0.5,
-        BorderSizePixel = 0, Position = UDim2.fromOffset(16, 210),
+        BorderSizePixel = 0, Position = UDim2.fromOffset(16, 278),
         Size = UDim2.new(1, -32, 0, 1), ZIndex = 51, Parent = settingsPanel,
     })
 
     local copyLastBtn = button(settingsPanel, "📋  复制最近代码", {
-        Position = UDim2.fromOffset(16, 224), Size = UDim2.new(0.48, -8, 0, 32),
+        Position = UDim2.fromOffset(16, 292), Size = UDim2.new(0.48, -8, 0, 32),
         BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.text,
         TextSize = 11, ZIndex = 51,
     })
@@ -1766,7 +1752,7 @@ local function buildInterface()
     end)
 
     local clearChatBtn = button(settingsPanel, "🗑  清空对话", {
-        Position = UDim2.new(0.52, 0, 0, 224), Size = UDim2.new(0.48, -8, 0, 32),
+        Position = UDim2.new(0.52, 0, 0, 292), Size = UDim2.new(0.48, -8, 0, 32),
         BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.text,
         TextSize = 11, ZIndex = 51,
     })
@@ -1783,6 +1769,66 @@ local function buildInterface()
         addWelcome()
         showToast("已清空对话")
     end)
+
+    -- ============================================================
+    -- 主题颜色应用（切换主题时调用）
+    -- ============================================================
+    local function applyThemeColors()
+        backdrop.BackgroundColor3 = COLORS.canvas
+        backdropGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, COLORS.backdropTop),
+            ColorSequenceKeypoint.new(1, COLORS.backdropBottom),
+        })
+
+        shell.BackgroundColor3 = COLORS.shell
+        shell.BackgroundTransparency = COLORS.shellTransparency
+        shellGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, COLORS.shell),
+            ColorSequenceKeypoint.new(1, COLORS.panel),
+        })
+
+        topbar.BackgroundColor3 = COLORS.shell
+        topbar.BackgroundTransparency = COLORS.shellTransparency
+        topbarGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, COLORS.panel),
+            ColorSequenceKeypoint.new(1, COLORS.shell),
+        })
+
+        sidebar.BackgroundColor3 = COLORS.sidebar
+        sidebar.BackgroundTransparency = COLORS.shellTransparency
+        sidebarGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, COLORS.panel),
+            ColorSequenceKeypoint.new(1, COLORS.sidebar),
+        })
+
+        main.BackgroundColor3 = COLORS.canvas
+        main.BackgroundTransparency = COLORS.shellTransparency
+
+        header.BackgroundColor3 = COLORS.canvas
+
+        composer.BackgroundColor3 = COLORS.panel
+        composer.BackgroundTransparency = COLORS.panelTransparency
+
+        settingsPanel.BackgroundColor3 = COLORS.panel
+        toast.BackgroundColor3 = COLORS.panelRaised
+        toast.TextColor3 = COLORS.text
+
+        promptBox.TextColor3 = COLORS.text
+        promptBox.PlaceholderColor3 = COLORS.muted
+        taskTitle.TextColor3 = COLORS.text
+        modelName.TextColor3 = COLORS.text
+        modelBadge.TextColor3 = COLORS.muted
+        tokenLabel.TextColor3 = COLORS.muted
+        hint.TextColor3 = COLORS.muted
+
+        modelMenu.BackgroundColor3 = COLORS.panel
+        keyInput.BackgroundColor3 = COLORS.canvas
+        keyInput.TextColor3 = COLORS.text
+        limitInput.BackgroundColor3 = COLORS.canvas
+        limitInput.TextColor3 = COLORS.text
+        replyInput.BackgroundColor3 = COLORS.canvas
+        replyInput.TextColor3 = COLORS.text
+    end
 
     local function closeOverlays()
         state.settingsOpen = false
@@ -1873,7 +1919,6 @@ local function buildInterface()
 
     addWelcome()
     updateTokenDisplay()
-    applyTheme("glass", false)
     setLevel(currentLevel, false)
 end
 
