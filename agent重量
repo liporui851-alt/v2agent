@@ -1,5 +1,5 @@
 --!nonstrict
--- Codex Interface — DeepSeek Agent (Slider on Main)
+-- Codex Interface — DeepSeek Agent (Fat Slider + 3 Themes)
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -680,18 +680,68 @@ local function buildInterface()
     new("UIListLayout", {Padding = UDim.new(0, 4), Parent = modelMenu})
 
     -- ============================================================
-    -- 推理等级滑动条（主界面）
+    -- 推理等级滑动条（胖版 + 3 主题）
     -- ============================================================
+    local THEMES = {
+        glass = {
+            name = "半透明",
+            track       = Color3.fromRGB(28, 32, 46),
+            trackTrans  = 0.35,
+            fill        = COLORS.accent,
+            fillTrans   = 0.25,
+            knob        = Color3.fromRGB(255, 255, 255),
+            knobTrans   = 0.55,
+            tick        = Color3.fromRGB(255, 255, 255),
+            tickTrans   = 0.65,
+            supreme     = PURPLE,
+            supremeTrans= 0.2,
+            supremeKnob = PURPLE_BRIGHT,
+            label       = COLORS.accentBright,
+        },
+        white = {
+            name = "白色",
+            track       = Color3.fromRGB(245, 248, 255),
+            trackTrans  = 0,
+            fill        = Color3.fromRGB(122, 150, 255),
+            fillTrans   = 0,
+            knob        = Color3.fromRGB(255, 255, 255),
+            knobTrans   = 0,
+            tick        = Color3.fromRGB(180, 195, 220),
+            tickTrans   = 0.2,
+            supreme     = Color3.fromRGB(180, 130, 255),
+            supremeTrans= 0,
+            supremeKnob = Color3.fromRGB(255, 255, 255),
+            label       = Color3.fromRGB(255, 255, 255),
+        },
+        dark = {
+            name = "黑灰",
+            track       = Color3.fromRGB(20, 22, 30),
+            trackTrans  = 0,
+            fill        = Color3.fromRGB(96, 104, 122),
+            fillTrans   = 0,
+            knob        = Color3.fromRGB(180, 188, 204),
+            knobTrans   = 0,
+            tick        = Color3.fromRGB(70, 78, 96),
+            tickTrans   = 0.1,
+            supreme     = Color3.fromRGB(150, 110, 220),
+            supremeTrans= 0,
+            supremeKnob = Color3.fromRGB(200, 180, 255),
+            label       = Color3.fromRGB(200, 210, 225),
+        },
+    }
+
+    local currentThemeId = "glass"
+    local currentTheme = THEMES[currentThemeId]
+
     local levelBar = new("Frame", {
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 46),
-        Size = UDim2.new(1, 0, 0, 78),
+        Size = UDim2.new(1, 0, 0, 86),
         ZIndex = 5,
         Parent = main,
     })
 
-    -- 上下分隔线
     new("Frame", {
         BackgroundColor3 = COLORS.border, BackgroundTransparency = 0.6,
         BorderSizePixel = 0, Position = UDim2.new(0, 16, 0, 0),
@@ -709,35 +759,72 @@ local function buildInterface()
         ZIndex = 6,
     })
 
-    local levelValueText = label(levelBar, REASONING_LEVELS[currentLevel].name, 11, COLORS.accentBright, Enum.Font.GothamBold, {
+    local themeBtn = button(levelBar, "◐", {
         AnchorPoint = Vector2.new(1, 0),
         Position = UDim2.new(1, -20, 0, 6),
+        Size = UDim2.fromOffset(28, 20),
+        BackgroundColor3 = COLORS.panel,
+        TextColor3 = COLORS.muted,
+        TextSize = 12,
+        ZIndex = 6,
+    })
+
+    local themeNameLabel = label(levelBar, currentTheme.name, 9, COLORS.muted, Enum.Font.GothamMedium, {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -52, 0, 8),
+        Size = UDim2.fromOffset(60, 16),
+        TextXAlignment = Enum.TextXAlignment.Right,
+        ZIndex = 6,
+    })
+
+    local levelValueText = label(levelBar, REASONING_LEVELS[currentLevel].name, 11, COLORS.accentBright, Enum.Font.GothamBold, {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -120, 0, 6),
         Size = UDim2.fromOffset(100, 18),
         TextXAlignment = Enum.TextXAlignment.Right,
         ZIndex = 6,
     })
 
     local levelSlider = new("Frame", {
-        Position = UDim2.fromOffset(40, 34),
-        Size = UDim2.new(1, -80, 0, 12),
-        BackgroundColor3 = COLORS.panelRaised,
+        Position = UDim2.fromOffset(40, 36),
+        Size = UDim2.new(1, -80, 0, 22),
+        BackgroundColor3 = currentTheme.track,
+        BackgroundTransparency = currentTheme.trackTrans,
         BorderSizePixel = 0,
         Active = true,
         ZIndex = 6,
         Parent = levelBar,
     })
-    corner(levelSlider, 6)
-    local levelTrackStroke = stroke(levelSlider, COLORS.border, 0.35, 1)
+    corner(levelSlider, 11)
+    local levelTrackStroke = stroke(levelSlider, COLORS.border, 0.4, 1)
 
     local levelFill = new("Frame", {
         Size = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 1, 0),
-        BackgroundColor3 = COLORS.accent,
+        BackgroundColor3 = currentTheme.fill,
+        BackgroundTransparency = currentTheme.fillTrans,
         BorderSizePixel = 0,
         ZIndex = 7,
         Parent = levelSlider,
     })
-    corner(levelFill, 6)
+    corner(levelFill, 11)
     local levelFillGradient = gradient(levelFill, COLORS.accentBright, COLORS.accent, 0)
+
+    local levelTicks = {}
+    for i = 1, #REASONING_LEVELS do
+        local progress = (i - 1) / (#REASONING_LEVELS - 1)
+        local tick = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(progress, 0, 0.5, 0),
+            Size = UDim2.fromOffset(8, 8),
+            BackgroundColor3 = currentTheme.tick,
+            BackgroundTransparency = currentTheme.tickTrans,
+            BorderSizePixel = 0,
+            ZIndex = 9,
+            Parent = levelSlider,
+        })
+        corner(tick, 4)
+        table.insert(levelTicks, tick)
+    end
 
     local particleLayer = new("Frame", {
         BackgroundTransparency = 1,
@@ -748,9 +835,10 @@ local function buildInterface()
         ZIndex = 8,
         Parent = levelSlider,
     })
+    corner(particleLayer, 11)
 
     local levelParticles = {}
-    for i = 1, 20 do
+    for i = 1, 24 do
         local psize = (i % 4 == 0) and 4 or (i % 3 == 0 and 3 or 2)
         local particle = new("Frame", {
             BackgroundColor3 = PURPLE_BRIGHT,
@@ -763,7 +851,7 @@ local function buildInterface()
         corner(particle, 3)
         table.insert(levelParticles, {
             node = particle,
-            seed = i / 20,
+            seed = i / 24,
             speed = 0.06 + (i % 5) * 0.025,
             wave = i * 0.65,
         })
@@ -786,27 +874,28 @@ local function buildInterface()
         end
     end)
 
+    local levelKnob = new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 0.5, 0),
+        Size = UDim2.fromOffset(26, 26),
+        BackgroundColor3 = currentTheme.knob,
+        BackgroundTransparency = currentTheme.knobTrans,
+        BorderSizePixel = 0,
+        Active = true,
+        ZIndex = 11,
+        Parent = levelSlider,
+    })
+    corner(levelKnob, 13)
+    local levelKnobStroke = stroke(levelKnob, currentTheme.knob, 0.15, 1.5)
+
     local levelLabels = {}
     for i, level in ipairs(REASONING_LEVELS) do
         local progress = (i - 1) / (#REASONING_LEVELS - 1)
-
-        local tick = new("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(progress, 0, 0.5, 0),
-            Size = UDim2.fromOffset(5, 5),
-            BackgroundColor3 = COLORS.text,
-            BackgroundTransparency = 0.4,
-            BorderSizePixel = 0,
-            ZIndex = 9,
-            Parent = levelSlider,
-        })
-        corner(tick, 3)
-
         local levelLabel = label(levelBar, level.name, 9,
-            i == currentLevel and COLORS.accentBright or COLORS.muted,
+            i == currentLevel and currentTheme.label or COLORS.muted,
             Enum.Font.GothamMedium, {
                 AnchorPoint = Vector2.new(0.5, 0),
-                Position = UDim2.new(progress, 40 - progress * 80, 0, 54),
+                Position = UDim2.new(progress, 40 - progress * 80, 0, 64),
                 Size = UDim2.fromOffset(54, 14),
                 TextXAlignment = Enum.TextXAlignment.Center,
                 ZIndex = 6,
@@ -814,20 +903,37 @@ local function buildInterface()
         table.insert(levelLabels, levelLabel)
     end
 
-    local levelKnob = new("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 0.5, 0),
-        Size = UDim2.fromOffset(22, 22),
-        BackgroundColor3 = COLORS.accentBright,
-        BorderSizePixel = 0,
-        Active = true,
-        ZIndex = 10,
-        Parent = levelSlider,
-    })
-    corner(levelKnob, 11)
-    local levelKnobStroke = stroke(levelKnob, COLORS.text, 0.25, 1)
-
     local levelDragging = false
+
+    local function applyTheme(themeId, animate)
+        currentThemeId = themeId
+        currentTheme = THEMES[themeId]
+        local info = TweenInfo.new(animate and 0.22 or 0, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        local isSupreme = currentLevel == #REASONING_LEVELS
+
+        TweenService:Create(levelSlider, info, {
+            BackgroundColor3 = currentTheme.track,
+            BackgroundTransparency = currentTheme.trackTrans,
+        }):Play()
+        TweenService:Create(levelFill, info, {
+            BackgroundColor3 = isSupreme and currentTheme.supreme or currentTheme.fill,
+            BackgroundTransparency = isSupreme and currentTheme.supremeTrans or currentTheme.fillTrans,
+        }):Play()
+        TweenService:Create(levelKnob, info, {
+            BackgroundColor3 = isSupreme and currentTheme.supremeKnob or currentTheme.knob,
+            BackgroundTransparency = currentTheme.knobTrans,
+        }):Play()
+        TweenService:Create(levelKnobStroke, info, {
+            Color = isSupreme and currentTheme.supremeKnob or currentTheme.knob,
+        }):Play()
+        for _, tick in ipairs(levelTicks) do
+            TweenService:Create(tick, info, {
+                BackgroundColor3 = currentTheme.tick,
+                BackgroundTransparency = currentTheme.tickTrans,
+            }):Play()
+        end
+        themeNameLabel.Text = currentTheme.name
+    end
 
     local function setLevel(index, announce)
         currentLevel = math.clamp(index, 1, #REASONING_LEVELS)
@@ -837,37 +943,25 @@ local function buildInterface()
 
         TweenService:Create(levelFill, tweenInfo, {
             Size = UDim2.new(progress, 0, 1, 0),
+            BackgroundColor3 = isSupreme and currentTheme.supreme or currentTheme.fill,
+            BackgroundTransparency = isSupreme and currentTheme.supremeTrans or currentTheme.fillTrans,
         }):Play()
         TweenService:Create(levelKnob, tweenInfo, {
             Position = UDim2.new(progress, 0, 0.5, 0),
+            BackgroundColor3 = isSupreme and currentTheme.supremeKnob or currentTheme.knob,
+        }):Play()
+        TweenService:Create(levelKnobStroke, tweenInfo, {
+            Color = isSupreme and currentTheme.supremeKnob or currentTheme.knob,
+        }):Play()
+        TweenService:Create(levelTrackStroke, tweenInfo, {
+            Color = isSupreme and currentTheme.supreme or COLORS.border,
         }):Play()
 
-        if isSupreme then
-            TweenService:Create(levelFill, tweenInfo, {BackgroundColor3 = PURPLE}):Play()
-            TweenService:Create(levelKnob, tweenInfo, {BackgroundColor3 = PURPLE_BRIGHT}):Play()
-            TweenService:Create(levelTrackStroke, tweenInfo, {Color = PURPLE}):Play()
-            TweenService:Create(levelKnobStroke, tweenInfo, {Color = PURPLE_BRIGHT}):Play()
-            levelFillGradient.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, PURPLE_BRIGHT),
-                ColorSequenceKeypoint.new(1, PURPLE_DARK),
-            })
-            levelValueText.TextColor3 = PURPLE_BRIGHT
-        else
-            TweenService:Create(levelFill, tweenInfo, {BackgroundColor3 = COLORS.accent}):Play()
-            TweenService:Create(levelKnob, tweenInfo, {BackgroundColor3 = COLORS.accentBright}):Play()
-            TweenService:Create(levelTrackStroke, tweenInfo, {Color = COLORS.border}):Play()
-            TweenService:Create(levelKnobStroke, tweenInfo, {Color = COLORS.text}):Play()
-            levelFillGradient.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, COLORS.accentBright),
-                ColorSequenceKeypoint.new(1, COLORS.accent),
-            })
-            levelValueText.TextColor3 = COLORS.accentBright
-        end
-
         levelValueText.Text = REASONING_LEVELS[currentLevel].name
+        levelValueText.TextColor3 = isSupreme and PURPLE_BRIGHT or currentTheme.label
         for i, item in ipairs(levelLabels) do
             item.TextColor3 = (i == currentLevel)
-                and (isSupreme and PURPLE_BRIGHT or COLORS.accentBright)
+                and (isSupreme and PURPLE_BRIGHT or currentTheme.label)
                 or COLORS.muted
         end
 
@@ -913,13 +1007,26 @@ local function buildInterface()
         end
     end)
 
+    themeBtn.MouseButton1Click:Connect(function()
+        local order = {"glass", "white", "dark"}
+        local nextIndex = 1
+        for i, id in ipairs(order) do
+            if id == currentThemeId then
+                nextIndex = i % #order + 1
+                break
+            end
+        end
+        applyTheme(order[nextIndex], true)
+        showToast("主题: " .. THEMES[order[nextIndex]].name)
+    end)
+
     -- ============================================================
     -- 对话区
     -- ============================================================
     local conversation = new("ScrollingFrame", {
         BackgroundTransparency = 1, BorderSizePixel = 0,
-        Position = UDim2.fromOffset(16, 46 + 78),
-        Size = UDim2.new(1, -32, 1, -140 - 78),
+        Position = UDim2.fromOffset(16, 46 + 86),
+        Size = UDim2.new(1, -32, 1, -140 - 86),
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollBarThickness = 3, ScrollBarImageColor3 = COLORS.border,
         Parent = main,
@@ -1489,7 +1596,7 @@ local function buildInterface()
     })
 
     -- ============================================================
-    -- 设置面板（无推理等级滑动条）
+    -- 设置面板
     -- ============================================================
     local settingsPanel = new("Frame", {
         Visible = false, AnchorPoint = Vector2.new(0.5, 0.5),
@@ -1766,6 +1873,7 @@ local function buildInterface()
 
     addWelcome()
     updateTokenDisplay()
+    applyTheme("glass", false)
     setLevel(currentLevel, false)
 end
 
