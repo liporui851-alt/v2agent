@@ -1,5 +1,5 @@
 --!nonstrict
--- Codex Interface — DeepSeek Agent (3 Themes + Thick Slider)
+-- Codex Interface — DeepSeek Agent (Fixed Slider + Split Colors)
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -22,7 +22,7 @@ local CONFIG = {
     TOKEN_LIMIT         = 8000,
     TOKEN_PER_REPLY     = 2000,
     AUTO_EXECUTE        = false,
-    THEME               = "translucent", -- "translucent" | "white" | "dark"
+    THEME               = "translucent",
 }
 
 local MODELS = {
@@ -43,7 +43,7 @@ local PURPLE_BRIGHT = Color3.fromRGB(220, 170, 255)
 local PURPLE_DARK   = Color3.fromRGB(130, 80, 220)
 
 -- ============================================================
--- 三套主题
+-- 三套主题（含对话颜色区分）
 -- ============================================================
 local THEMES = {
     translucent = {
@@ -64,6 +64,15 @@ local THEMES = {
         panelTransparency = 0.04,
         backdropTop = Color3.fromRGB(8, 10, 18),
         backdropBottom = Color3.fromRGB(21, 24, 42),
+        -- 对话区分
+        userBubble  = Color3.fromRGB(30, 45, 70),
+        userBorder  = Color3.fromRGB(60, 90, 140),
+        aiBubble    = Color3.fromRGB(28, 24, 45),
+        aiBorder    = Color3.fromRGB(80, 65, 130),
+        toolOkBubble = Color3.fromRGB(22, 38, 30),
+        toolOkBorder = Color3.fromRGB(60, 130, 90),
+        toolErrBubble = Color3.fromRGB(42, 22, 26),
+        toolErrBorder = Color3.fromRGB(140, 60, 70),
     },
     white = {
         canvas      = Color3.fromRGB(245, 246, 250),
@@ -83,6 +92,14 @@ local THEMES = {
         panelTransparency = 0,
         backdropTop = Color3.fromRGB(235, 238, 245),
         backdropBottom = Color3.fromRGB(215, 220, 232),
+        userBubble  = Color3.fromRGB(220, 235, 255),
+        userBorder  = Color3.fromRGB(160, 195, 240),
+        aiBubble    = Color3.fromRGB(240, 230, 255),
+        aiBorder    = Color3.fromRGB(200, 175, 240),
+        toolOkBubble = Color3.fromRGB(220, 245, 230),
+        toolOkBorder = Color3.fromRGB(150, 210, 175),
+        toolErrBubble = Color3.fromRGB(255, 230, 235),
+        toolErrBorder = Color3.fromRGB(240, 170, 180),
     },
     dark = {
         canvas      = Color3.fromRGB(22, 22, 24),
@@ -102,6 +119,14 @@ local THEMES = {
         panelTransparency = 0,
         backdropTop = Color3.fromRGB(20, 20, 22),
         backdropBottom = Color3.fromRGB(30, 30, 34),
+        userBubble  = Color3.fromRGB(52, 60, 80),
+        userBorder  = Color3.fromRGB(80, 95, 120),
+        aiBubble    = Color3.fromRGB(58, 52, 76),
+        aiBorder    = Color3.fromRGB(95, 85, 125),
+        toolOkBubble = Color3.fromRGB(46, 62, 52),
+        toolOkBorder = Color3.fromRGB(85, 120, 95),
+        toolErrBubble = Color3.fromRGB(68, 46, 52),
+        toolErrBorder = Color3.fromRGB(130, 85, 95),
     },
 }
 
@@ -692,7 +717,6 @@ local function buildInterface()
         Size = UDim2.new(1, 0, 0, 46), Parent = main,
     })
     padding(header, 16, 16, 0, 0)
-    gradient(header, COLORS.canvas, COLORS.canvas, 0)
 
     local collapseButton = button(header, "☰", {
         Size = UDim2.fromOffset(26, 26), Position = UDim2.fromOffset(0, 10),
@@ -740,13 +764,13 @@ local function buildInterface()
     new("UIListLayout", {Padding = UDim.new(0, 4), Parent = modelMenu})
 
     -- ============================================================
-    -- 推理等级滑动条（主界面，加粗，圆点包在里面）
+    -- 推理等级滑动条（修好：圆点完全包在轨道内）
     -- ============================================================
     local levelBar = new("Frame", {
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 46),
-        Size = UDim2.new(1, 0, 0, 86),
+        Size = UDim2.new(1, 0, 0, 92),
         ZIndex = 5,
         Parent = main,
     })
@@ -776,10 +800,14 @@ local function buildInterface()
         ZIndex = 6,
     })
 
-    -- 轨道加粗：高 22，圆点 18 包在里面
+    -- 轨道：高 26，用 UIPadding 左右缩进圆点半径，保证第一档和最后一档圆点完全在轨道内
+    local KNOB_SIZE = 20
+    local KNOB_RADIUS = KNOB_SIZE / 2
+    local TRACK_HEIGHT = 26
+
     local levelSlider = new("Frame", {
-        Position = UDim2.fromOffset(40, 36),
-        Size = UDim2.new(1, -80, 0, 22),
+        Position = UDim2.fromOffset(40, 38),
+        Size = UDim2.new(1, -80, 0, TRACK_HEIGHT),
         BackgroundColor3 = COLORS.panelRaised,
         BorderSizePixel = 0,
         Active = true,
@@ -787,17 +815,27 @@ local function buildInterface()
         ZIndex = 6,
         Parent = levelBar,
     })
-    corner(levelSlider, 11)
+    corner(levelSlider, TRACK_HEIGHT / 2)
     local levelTrackStroke = stroke(levelSlider, COLORS.border, 0.35, 1)
+
+    -- 内层容器：实际可拖动区域，左右各留 KNOB_RADIUS
+    local sliderInner = new("Frame", {
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(KNOB_RADIUS, 0),
+        Size = UDim2.new(1, -KNOB_SIZE, 1, 0),
+        ZIndex = 6,
+        Parent = levelSlider,
+    })
 
     local levelFill = new("Frame", {
         Size = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 1, 0),
         BackgroundColor3 = COLORS.accent,
         BorderSizePixel = 0,
         ZIndex = 7,
-        Parent = levelSlider,
+        Parent = sliderInner,
     })
-    corner(levelFill, 11)
+    corner(levelFill, TRACK_HEIGHT / 2)
     local levelFillGradient = gradient(levelFill, COLORS.accentBright, COLORS.accent, 0)
 
     local particleLayer = new("Frame", {
@@ -807,9 +845,9 @@ local function buildInterface()
         Size = UDim2.fromScale(1, 1),
         Visible = currentLevel == #REASONING_LEVELS,
         ZIndex = 8,
-        Parent = levelSlider,
+        Parent = sliderInner,
     })
-    corner(particleLayer, 11)
+    corner(particleLayer, TRACK_HEIGHT / 2)
 
     local levelParticles = {}
     for i = 1, 20 do
@@ -843,8 +881,7 @@ local function buildInterface()
             particle.node.BackgroundTransparency = alpha
             local r = 190 + math.sin(t * 2 + particle.wave) * 40
             local g = 130 + math.cos(t * 1.7 + particle.wave) * 40
-            local b = 255
-            particle.node.BackgroundColor3 = Color3.fromRGB(r, g, b)
+            particle.node.BackgroundColor3 = Color3.fromRGB(r, g, 255)
         end
     end)
 
@@ -860,7 +897,7 @@ local function buildInterface()
             BackgroundTransparency = 0.4,
             BorderSizePixel = 0,
             ZIndex = 9,
-            Parent = levelSlider,
+            Parent = sliderInner,
         })
         corner(tick, 3)
 
@@ -868,7 +905,7 @@ local function buildInterface()
             i == currentLevel and COLORS.accentBright or COLORS.muted,
             Enum.Font.GothamMedium, {
                 AnchorPoint = Vector2.new(0.5, 0),
-                Position = UDim2.new(progress, 40 - progress * 80, 0, 64),
+                Position = UDim2.new(progress, 40 - progress * 80, 0, 70),
                 Size = UDim2.fromOffset(54, 14),
                 TextXAlignment = Enum.TextXAlignment.Center,
                 ZIndex = 6,
@@ -876,18 +913,18 @@ local function buildInterface()
         table.insert(levelLabels, levelLabel)
     end
 
-    -- knob 18x18，包在 22 高的轨道里
+    -- 圆点在 sliderInner 里，AnchorPoint 0.5，progress 0/1 时被内边距限制，完全在轨道内
     local levelKnob = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 0.5, 0),
-        Size = UDim2.fromOffset(18, 18),
+        Size = UDim2.fromOffset(KNOB_SIZE, KNOB_SIZE),
         BackgroundColor3 = COLORS.accentBright,
         BorderSizePixel = 0,
         Active = true,
         ZIndex = 10,
-        Parent = levelSlider,
+        Parent = sliderInner,
     })
-    corner(levelKnob, 9)
+    corner(levelKnob, KNOB_RADIUS)
     local levelKnobStroke = stroke(levelKnob, COLORS.text, 0.25, 1)
 
     local levelDragging = false
@@ -940,9 +977,9 @@ local function buildInterface()
     end
 
     local function setLevelFromX(x)
-        local width = math.max(levelSlider.AbsoluteSize.X, 1)
+        local width = math.max(sliderInner.AbsoluteSize.X, 1)
         local progress = math.clamp(
-            (x - levelSlider.AbsolutePosition.X) / width,
+            (x - sliderInner.AbsolutePosition.X) / width,
             0,
             1
         )
@@ -981,8 +1018,8 @@ local function buildInterface()
     -- ============================================================
     local conversation = new("ScrollingFrame", {
         BackgroundTransparency = 1, BorderSizePixel = 0,
-        Position = UDim2.fromOffset(16, 46 + 86),
-        Size = UDim2.new(1, -32, 1, -140 - 86),
+        Position = UDim2.fromOffset(16, 46 + 92),
+        Size = UDim2.new(1, -32, 1, -140 - 92),
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollBarThickness = 3, ScrollBarImageColor3 = COLORS.border,
         Parent = main,
@@ -1033,7 +1070,6 @@ local function buildInterface()
         })
         corner(codeFrame, 6)
         stroke(codeFrame, COLORS.border, 0.25, 1)
-        gradient(codeFrame, COLORS.panel, COLORS.canvas, 90)
         padding(codeFrame, 8, 8, 24, 8)
 
         new("TextLabel", {
@@ -1074,6 +1110,7 @@ local function buildInterface()
         end)
     end
 
+    -- 工具消息：绿/红区分
     local function addToolMessage(tool, args, result, ok)
         state.messageCount += 1
         local row = new("Frame", {
@@ -1098,19 +1135,19 @@ local function buildInterface()
             Parent = row,
         })
 
-        label(contentFrame, "工具 · " .. tool, 10, COLORS.accentBright, Enum.Font.GothamBold, {
+        label(contentFrame, "工具 · " .. tool, 10, ok and COLORS.green or COLORS.danger, Enum.Font.GothamBold, {
             Size = UDim2.new(1, 0, 0, 16),
         })
 
         local bodyFrame = new("Frame", {
-            BackgroundColor3 = COLORS.panel, BorderSizePixel = 0,
+            BackgroundColor3 = ok and COLORS.toolOkBubble or COLORS.toolErrBubble,
+            BorderSizePixel = 0,
             Position = UDim2.fromOffset(0, 20),
             Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
             Parent = contentFrame,
         })
         corner(bodyFrame, 8)
-        stroke(bodyFrame, COLORS.border, 0.4, 1)
-        gradient(bodyFrame, COLORS.panelRaised, COLORS.panel, 90)
+        stroke(bodyFrame, ok and COLORS.toolOkBorder or COLORS.toolErrBorder, 0.3, 1)
         padding(bodyFrame, 10, 10, 8, 8)
 
         new("TextLabel", {
@@ -1145,6 +1182,7 @@ local function buildInterface()
         return row
     end
 
+    -- 对话消息：用户蓝，AI 紫
     local function addMessage(role, content, opts)
         state.messageCount += 1
         local isUser = role == "user"
@@ -1155,7 +1193,7 @@ local function buildInterface()
         })
 
         local icon = new("Frame", {
-            BackgroundColor3 = isUser and Color3.fromRGB(74, 96, 128) or COLORS.accent,
+            BackgroundColor3 = isUser and COLORS.userBorder or COLORS.accent,
             BorderSizePixel = 0, Position = UDim2.fromOffset(2, 1),
             Size = UDim2.fromOffset(22, 22), Parent = row,
         })
@@ -1170,7 +1208,7 @@ local function buildInterface()
             Parent = row,
         })
 
-        label(contentFrame, isUser and "你" or "Codex", 10, isUser and COLORS.muted or COLORS.accentBright, Enum.Font.GothamBold, {
+        label(contentFrame, isUser and "你" or "Codex", 10, isUser and COLORS.userBorder or COLORS.accentBright, Enum.Font.GothamBold, {
             Size = UDim2.new(1, -60, 0, 16),
         })
         if not isUser then
@@ -1180,19 +1218,15 @@ local function buildInterface()
             })
         end
 
+        -- 用户用 userBubble/userBorder，AI 用 aiBubble/aiBorder
         local bodyFrame = new("Frame", {
-            BackgroundColor3 = isUser and COLORS.panel or COLORS.shell,
+            BackgroundColor3 = isUser and COLORS.userBubble or COLORS.aiBubble,
             BorderSizePixel = 0, Position = UDim2.fromOffset(0, 20),
             Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
             Parent = contentFrame,
         })
-        if isUser then
-            corner(bodyFrame, 8)
-            stroke(bodyFrame, COLORS.border, 0.45, 1)
-        end
-        if not isUser then
-            gradient(bodyFrame, COLORS.panel, COLORS.shell, 90)
-        end
+        corner(bodyFrame, 8)
+        stroke(bodyFrame, isUser and COLORS.userBorder or COLORS.aiBorder, 0.3, 1)
         padding(bodyFrame, 10, 10, 8, 8)
 
         local textLabel = label(bodyFrame, "", 12, COLORS.text, Enum.Font.Gotham, {
@@ -1280,7 +1314,6 @@ local function buildInterface()
     })
     corner(composer, 10)
     stroke(composer, COLORS.border, 0.1, 1)
-    gradient(composer, COLORS.panelRaised, COLORS.panel, 90)
 
     promptBox = new("TextBox", {
         PlaceholderText = "让 Codex 构建、调试、解释...",
@@ -1554,7 +1587,7 @@ local function buildInterface()
     })
 
     -- ============================================================
-    -- 设置面板（含主题切换）
+    -- 设置面板
     -- ============================================================
     local settingsPanel = new("Frame", {
         Visible = false, AnchorPoint = Vector2.new(0.5, 0.5),
@@ -1564,7 +1597,6 @@ local function buildInterface()
     })
     corner(settingsPanel, 12)
     stroke(settingsPanel, COLORS.border, 0.1, 1)
-    gradient(settingsPanel, COLORS.panelRaised, COLORS.panel, 90)
 
     new("Frame", {
         BackgroundColor3 = COLORS.accent, BackgroundTransparency = 0.15,
@@ -1581,7 +1613,6 @@ local function buildInterface()
         TextColor3 = COLORS.muted, TextSize = 16, ZIndex = 51,
     })
 
-    -- 主题切换
     label(settingsPanel, "UI 主题", 9, COLORS.muted, Enum.Font.GothamBold, {
         Position = UDim2.fromOffset(16, 50), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
@@ -1770,9 +1801,6 @@ local function buildInterface()
         showToast("已清空对话")
     end)
 
-    -- ============================================================
-    -- 主题颜色应用（切换主题时调用）
-    -- ============================================================
     local function applyThemeColors()
         backdrop.BackgroundColor3 = COLORS.canvas
         backdropGradient.Color = ColorSequence.new({
@@ -1805,10 +1833,8 @@ local function buildInterface()
         main.BackgroundTransparency = COLORS.shellTransparency
 
         header.BackgroundColor3 = COLORS.canvas
-
         composer.BackgroundColor3 = COLORS.panel
         composer.BackgroundTransparency = COLORS.panelTransparency
-
         settingsPanel.BackgroundColor3 = COLORS.panel
         toast.BackgroundColor3 = COLORS.panelRaised
         toast.TextColor3 = COLORS.text
