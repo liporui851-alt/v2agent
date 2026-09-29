@@ -1,5 +1,5 @@
 --!nonstrict
--- Codex Interface — DeepSeek Agent (Fixed)
+-- Codex Interface — DeepSeek Agent (Fixed v2)
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -24,6 +24,12 @@ local CONFIG = {
     AUTO_EXECUTE        = false,
     THEME               = "translucent",
 }
+
+-- 字体统一
+local FONT_REGULAR = Enum.Font.SourceSans
+local FONT_BOLD    = Enum.Font.SourceSansBold
+local FONT_SEMI    = Enum.Font.SourceSansSemibold
+local FONT_CODE    = Enum.Font.Code
 
 local MODELS = {
     { id = "deepseek-flash",  name = "V4.1 Flash", badge = "Fast", description = "最快、最便宜", context = "128K", color = Color3.fromRGB(108, 211, 157) },
@@ -59,8 +65,6 @@ local THEMES = {
         danger      = Color3.fromRGB(255, 113, 113),
         shellTransparency = 0.02,
         panelTransparency = 0.04,
-        backdropTop = Color3.fromRGB(8, 10, 18),
-        backdropBottom = Color3.fromRGB(21, 24, 42),
         userBubble  = Color3.fromRGB(30, 45, 70),
         userBorder  = Color3.fromRGB(60, 90, 140),
         aiBubble    = Color3.fromRGB(28, 24, 45),
@@ -92,8 +96,6 @@ local THEMES = {
         danger      = Color3.fromRGB(230, 80, 90),
         shellTransparency = 0,
         panelTransparency = 0,
-        backdropTop = Color3.fromRGB(235, 238, 245),
-        backdropBottom = Color3.fromRGB(215, 220, 232),
         userBubble  = Color3.fromRGB(220, 235, 255),
         userBorder  = Color3.fromRGB(160, 195, 240),
         aiBubble    = Color3.fromRGB(240, 230, 255),
@@ -125,8 +127,6 @@ local THEMES = {
         danger      = Color3.fromRGB(240, 110, 120),
         shellTransparency = 0,
         panelTransparency = 0,
-        backdropTop = Color3.fromRGB(20, 20, 22),
-        backdropBottom = Color3.fromRGB(30, 30, 34),
         userBubble  = Color3.fromRGB(52, 60, 80),
         userBorder  = Color3.fromRGB(80, 95, 120),
         aiBubble    = Color3.fromRGB(58, 52, 76),
@@ -415,9 +415,10 @@ local function label(parent, text, size, color, weight, properties)
         Text = text,
         TextColor3 = color,
         TextSize = size,
-        Font = weight or Enum.Font.Gotham,
+        Font = weight or FONT_REGULAR,
         TextXAlignment = Enum.TextXAlignment.Left,
         TextYAlignment = Enum.TextYAlignment.Center,
+        TextTransparency = 0,
         Parent = parent,
     })
     if properties then
@@ -435,8 +436,9 @@ local function button(parent, text, properties)
         Text = text,
         TextColor3 = COLORS.text,
         TextSize = 13,
-        Font = Enum.Font.GothamMedium,
+        Font = FONT_SEMI,
         AutoButtonColor = false,
+        TextTransparency = 0,
         Parent = parent,
     })
     corner(item, 8)
@@ -474,10 +476,10 @@ local function showKeyGate(onSuccess)
     corner(box, 12)
     stroke(box, COLORS.border, 0.1, 1)
 
-    label(box, "Codex · DeepSeek", 18, COLORS.text, Enum.Font.GothamBold, {
+    label(box, "Codex · DeepSeek", 18, COLORS.text, FONT_BOLD, {
         Position = UDim2.fromOffset(20, 20), Size = UDim2.new(1, -40, 0, 26),
     })
-    label(box, "输入卡密", 11, COLORS.muted, Enum.Font.Gotham, {
+    label(box, "输入卡密", 11, COLORS.muted, FONT_REGULAR, {
         Position = UDim2.fromOffset(20, 46), Size = UDim2.new(1, -40, 0, 16),
     })
 
@@ -486,19 +488,19 @@ local function showKeyGate(onSuccess)
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         PlaceholderText = "卡密", PlaceholderColor3 = COLORS.muted,
         Text = "", TextColor3 = COLORS.text, TextSize = 14,
-        Font = Enum.Font.Code, ClearTextOnFocus = false, Parent = box,
+        Font = FONT_CODE, ClearTextOnFocus = false, TextTransparency = 0, Parent = box,
     })
     corner(input, 8)
     padding(input, 12, 12, 0, 0)
 
-    local err = label(box, "", 10, COLORS.danger, Enum.Font.Gotham, {
+    local err = label(box, "", 10, COLORS.danger, FONT_REGULAR, {
         Position = UDim2.fromOffset(20, 122), Size = UDim2.new(1, -40, 0, 14),
     })
 
     local submit = button(box, "验证", {
         Position = UDim2.fromOffset(20, 142), Size = UDim2.new(1, -40, 0, 42),
         BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
-        Font = Enum.Font.GothamBold, TextSize = 14,
+        Font = FONT_BOLD, TextSize = 14,
     })
 
     local function try()
@@ -552,17 +554,16 @@ local function buildInterface()
         refreshScale()
     end)
 
-    -- 主题回调注册表
     local themeCallbacks = {}
     local function registerThemeCallback(fn)
         table.insert(themeCallbacks, fn)
     end
 
+    -- 背景：完全透明，无渐变
     local backdrop = new("Frame", {
-        BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
+        BackgroundTransparency = 1, BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1), Parent = gui,
     })
-    local backdropGradient = gradient(backdrop, COLORS.backdropTop, COLORS.backdropBottom, 25)
 
     local shellShadow = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 8),
@@ -605,20 +606,20 @@ local function buildInterface()
         Parent = topbar,
     })
     corner(brandMark, 6)
-    label(brandMark, "✦", 13, COLORS.canvas, Enum.Font.GothamBold, {
+    label(brandMark, "✦", 13, COLORS.canvas, FONT_BOLD, {
         Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
     })
-    local brandLabel = label(topbar, "Codex", 14, COLORS.text, Enum.Font.GothamBold, {
+    local brandLabel = label(topbar, "Codex", 14, COLORS.text, FONT_BOLD, {
         Position = UDim2.fromOffset(30, 6), Size = UDim2.new(0, 100, 0, 20),
     })
-    local brandSub = label(topbar, "DeepSeek Agent", 10, COLORS.muted, Enum.Font.Gotham, {
+    local brandSub = label(topbar, "DeepSeek Agent", 10, COLORS.muted, FONT_REGULAR, {
         Position = UDim2.fromOffset(30, 25), Size = UDim2.new(0, 160, 0, 14),
     })
 
     local minimizeBtn = button(topbar, "—", {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -70, 0.5, 0),
         Size = UDim2.fromOffset(28, 26), BackgroundColor3 = COLORS.shell,
-        TextColor3 = COLORS.muted, TextSize = 15, Font = Enum.Font.GothamBold,
+        TextColor3 = COLORS.muted, TextSize = 15, Font = FONT_BOLD,
     })
     minimizeBtn.MouseEnter:Connect(function()
         TweenService:Create(minimizeBtn, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas}):Play()
@@ -630,7 +631,7 @@ local function buildInterface()
     local closeBtn = button(topbar, "×", {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
         Size = UDim2.fromOffset(28, 26), BackgroundColor3 = COLORS.shell,
-        TextColor3 = COLORS.muted, TextSize = 16, Font = Enum.Font.GothamBold,
+        TextColor3 = COLORS.muted, TextSize = 16, Font = FONT_BOLD,
     })
     closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
     closeBtn.MouseEnter:Connect(function()
@@ -689,10 +690,10 @@ local function buildInterface()
     local newTaskButton = button(sidebar, "+  新建任务", {
         Size = UDim2.new(1, 0, 0, 32),
         BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
-        Font = Enum.Font.GothamBold, TextSize = 12,
+        Font = FONT_BOLD, TextSize = 12,
     })
 
-    label(sidebar, "任务", 9, COLORS.muted, Enum.Font.GothamBold, {
+    label(sidebar, "任务", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.fromOffset(4, 44), Size = UDim2.new(1, -8, 0, 16),
     })
 
@@ -706,7 +707,7 @@ local function buildInterface()
         Parent = sidebar,
     })
 
-    label(sidebar, "工作区", 9, COLORS.muted, Enum.Font.GothamBold, {
+    label(sidebar, "工作区", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.new(0, 4, 1, -64), Size = UDim2.new(1, -8, 0, 16),
     })
     local workspaceButton = button(sidebar, "◈  工作区", {
@@ -742,11 +743,10 @@ local function buildInterface()
         BackgroundColor3 = COLORS.canvas, TextColor3 = COLORS.muted, TextSize = 14,
     })
 
-    local taskTitle = label(header, state.taskTitle, 13, COLORS.text, Enum.Font.GothamBold, {
+    local taskTitle = label(header, state.taskTitle, 13, COLORS.text, FONT_BOLD, {
         Position = UDim2.fromOffset(34, 12), Size = UDim2.new(0.5, 0, 0, 20),
     })
 
-    -- 模型按钮
     local modelButton = button(header, "", {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
         Size = UDim2.fromOffset(160, 32), BackgroundColor3 = COLORS.panel,
@@ -759,18 +759,17 @@ local function buildInterface()
         Parent = modelButton,
     })
     corner(modelDot, 4)
-    local modelName = label(modelButton, state.selectedModel.name, 11, COLORS.text, Enum.Font.GothamMedium, {
+    local modelName = label(modelButton, state.selectedModel.name, 11, COLORS.text, FONT_SEMI, {
         Position = UDim2.fromOffset(24, 4), Size = UDim2.fromOffset(120, 16),
     })
-    local modelBadge = label(modelButton, state.selectedModel.badge, 9, COLORS.muted, Enum.Font.Gotham, {
+    local modelBadge = label(modelButton, state.selectedModel.badge, 9, COLORS.muted, FONT_REGULAR, {
         Position = UDim2.fromOffset(24, 19), Size = UDim2.fromOffset(120, 12),
     })
-    label(modelButton, "⌄", 12, COLORS.muted, Enum.Font.GothamBold, {
+    label(modelButton, "⌄", 12, COLORS.muted, FONT_BOLD, {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
         Size = UDim2.fromOffset(16, 18), TextXAlignment = Enum.TextXAlignment.Center,
     })
 
-    -- 模型菜单：挂在 header 底部往下弹
     local modelMenu = new("Frame", {
         Visible = false, AnchorPoint = Vector2.new(1, 0),
         Position = UDim2.new(1, 0, 1, 4),
@@ -807,18 +806,18 @@ local function buildInterface()
         Size = UDim2.new(1, -32, 0, 1), Parent = levelBar,
     })
 
-    local levelTitleLabel = label(levelBar, "推理等级", 9, COLORS.muted, Enum.Font.GothamBold, {
+    local levelTitleLabel = label(levelBar, "推理等级", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.fromOffset(20, 8),
         Size = UDim2.fromOffset(100, 16),
-        ZIndex = 6,
+        ZIndex = 7,
     })
 
-    local levelValueText = label(levelBar, REASONING_LEVELS[currentLevel].name, 11, COLORS.accentBright, Enum.Font.GothamBold, {
+    local levelValueText = label(levelBar, REASONING_LEVELS[currentLevel].name, 11, COLORS.accentBright, FONT_BOLD, {
         AnchorPoint = Vector2.new(1, 0),
         Position = UDim2.new(1, -20, 0, 6),
         Size = UDim2.fromOffset(100, 18),
         TextXAlignment = Enum.TextXAlignment.Right,
-        ZIndex = 6,
+        ZIndex = 7,
     })
 
     local KNOB_SIZE = 20
@@ -838,33 +837,28 @@ local function buildInterface()
     corner(levelSlider, TRACK_HEIGHT / 2)
     local levelTrackStroke = stroke(levelSlider, COLORS.trackBorder, 0.2, 1)
 
-    local sliderInner = new("Frame", {
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(KNOB_RADIUS, 0),
-        Size = UDim2.new(1, -KNOB_SIZE, 1, 0),
-        ZIndex = 6,
-        Parent = levelSlider,
-    })
-
+    -- 填充条：直接在轨道里，从最左开始
     local levelFill = new("Frame", {
-        Size = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 1, 0),
+        Position = UDim2.fromOffset(0, 0),
+        Size = UDim2.new(0, KNOB_RADIUS, 1, 0),
         BackgroundColor3 = COLORS.accent,
         BorderSizePixel = 0,
         ZIndex = 7,
-        Parent = sliderInner,
+        Parent = levelSlider,
     })
     corner(levelFill, TRACK_HEIGHT / 2)
     local levelFillGradient = gradient(levelFill, COLORS.fillStart, COLORS.fillEnd, 0)
 
+    -- 粒子层
     local particleLayer = new("Frame", {
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
         ClipsDescendants = true,
-        Size = UDim2.fromScale(1, 1),
+        Position = UDim2.fromOffset(0, 0),
+        Size = UDim2.new(1, 0, 1, 0),
         Visible = currentLevel == #REASONING_LEVELS,
         ZIndex = 8,
-        Parent = sliderInner,
+        Parent = levelSlider,
     })
     corner(particleLayer, TRACK_HEIGHT / 2)
 
@@ -916,31 +910,31 @@ local function buildInterface()
             BackgroundTransparency = 0.4,
             BorderSizePixel = 0,
             ZIndex = 9,
-            Parent = sliderInner,
+            Parent = levelSlider,
         })
         corner(tick, 3)
 
         local levelLabel = label(levelBar, level.name, 9,
             i == currentLevel and COLORS.accentBright or COLORS.muted,
-            Enum.Font.GothamMedium, {
+            FONT_SEMI, {
                 AnchorPoint = Vector2.new(0.5, 0),
                 Position = UDim2.new(progress, 40 - progress * 80, 0, 70),
                 Size = UDim2.fromOffset(54, 14),
                 TextXAlignment = Enum.TextXAlignment.Center,
-                ZIndex = 6,
+                ZIndex = 7,
             })
         table.insert(levelLabels, levelLabel)
     end
 
     local levelKnob = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 0.5, 0),
+        Position = UDim2.new(0, KNOB_RADIUS, 0.5, 0),
         Size = UDim2.fromOffset(KNOB_SIZE, KNOB_SIZE),
         BackgroundColor3 = COLORS.knobColor,
         BorderSizePixel = 0,
         Active = true,
         ZIndex = 10,
-        Parent = sliderInner,
+        Parent = levelSlider,
     })
     corner(levelKnob, KNOB_RADIUS)
     local levelKnobStroke = stroke(levelKnob, COLORS.knobBorder, 0.2, 2)
@@ -953,11 +947,16 @@ local function buildInterface()
         local tweenInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
         local isSupreme = currentLevel == #REASONING_LEVELS
 
+        -- 填充宽度：从轨道最左（offset 0）到圆点中心
+        local trackW = math.max(levelSlider.AbsoluteSize.X, 200)
+        local fillW = KNOB_RADIUS + progress * (trackW - KNOB_SIZE)
+        local knobX = KNOB_RADIUS + progress * (trackW - KNOB_SIZE)
+
         TweenService:Create(levelFill, tweenInfo, {
-            Size = UDim2.new(progress, 0, 1, 0),
+            Size = UDim2.fromOffset(fillW, TRACK_HEIGHT)
         }):Play()
         TweenService:Create(levelKnob, tweenInfo, {
-            Position = UDim2.new(progress, 0, 0.5, 0),
+            Position = UDim2.fromOffset(knobX, TRACK_HEIGHT / 2)
         }):Play()
 
         if isSupreme then
@@ -991,12 +990,10 @@ local function buildInterface()
     end
 
     local function setLevelFromX(x)
-        local width = math.max(sliderInner.AbsoluteSize.X, 1)
-        local progress = math.clamp(
-            (x - sliderInner.AbsolutePosition.X) / width,
-            0,
-            1
-        )
+        local absX = levelSlider.AbsolutePosition.X
+        local trackW = math.max(levelSlider.AbsoluteSize.X, 1)
+        local localX = x - absX
+        local progress = math.clamp((localX - KNOB_RADIUS) / math.max(trackW - KNOB_SIZE, 1), 0, 1)
         local index = math.floor(progress * (#REASONING_LEVELS - 1) + 0.5) + 1
         setLevel(index, false)
     end
@@ -1050,7 +1047,7 @@ local function buildInterface()
         end)
     end
 
-    local toast = label(gui, "", 11, COLORS.text, Enum.Font.GothamMedium, {
+    local toast = label(gui, "", 11, COLORS.text, FONT_SEMI, {
         Visible = false, AnchorPoint = Vector2.new(0.5, 1),
         Position = UDim2.new(0.5, 0, 1, -16), Size = UDim2.fromOffset(360, 30),
         BackgroundColor3 = COLORS.panelRaised, TextXAlignment = Enum.TextXAlignment.Center,
@@ -1092,7 +1089,7 @@ local function buildInterface()
         new("TextLabel", {
             BackgroundTransparency = 1, Text = code,
             TextColor3 = COLORS.text, TextSize = 10,
-            Font = Enum.Font.Code, TextWrapped = true,
+            Font = FONT_CODE, TextWrapped = true, TextTransparency = 0,
             TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
             Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
             Parent = codeFrame,
@@ -1141,7 +1138,7 @@ local function buildInterface()
             Size = UDim2.fromOffset(22, 22), Parent = row,
         })
         corner(icon, 11)
-        label(icon, ok and "✓" or "✕", 11, COLORS.canvas, Enum.Font.GothamBold, {
+        label(icon, ok and "✓" or "✕", 11, COLORS.canvas, FONT_BOLD, {
             Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
         })
 
@@ -1151,7 +1148,7 @@ local function buildInterface()
             Parent = row,
         })
 
-        local toolHeader = label(contentFrame, "工具 · " .. tool, 10, ok and COLORS.green or COLORS.danger, Enum.Font.GothamBold, {
+        local toolHeader = label(contentFrame, "工具 · " .. tool, 10, ok and COLORS.green or COLORS.danger, FONT_BOLD, {
             Size = UDim2.new(1, 0, 0, 16),
         })
 
@@ -1174,7 +1171,7 @@ local function buildInterface()
         local argsLabel = new("TextLabel", {
             BackgroundTransparency = 1, Text = args:sub(1, 200),
             TextColor3 = COLORS.text, TextSize = 9,
-            Font = Enum.Font.Code, TextWrapped = true,
+            Font = FONT_CODE, TextWrapped = true, TextTransparency = 0,
             TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
             Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
             Parent = bodyFrame,
@@ -1183,7 +1180,7 @@ local function buildInterface()
         local resultLabel = new("TextLabel", {
             BackgroundTransparency = 1, Text = result:sub(1, 200),
             TextColor3 = ok and COLORS.green or COLORS.danger, TextSize = 9,
-            Font = Enum.Font.Code, TextWrapped = true,
+            Font = FONT_CODE, TextWrapped = true, TextTransparency = 0,
             TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
             Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
             Parent = bodyFrame,
@@ -1218,7 +1215,7 @@ local function buildInterface()
             Size = UDim2.fromOffset(22, 22), Parent = row,
         })
         corner(icon, 11)
-        label(icon, isUser and string.sub(player.DisplayName, 1, 1):upper() or "✦", 10, COLORS.canvas, Enum.Font.GothamBold, {
+        label(icon, isUser and string.sub(player.DisplayName, 1, 1):upper() or "✦", 10, COLORS.canvas, FONT_BOLD, {
             Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
         })
 
@@ -1228,11 +1225,11 @@ local function buildInterface()
             Parent = row,
         })
 
-        local authorLabel = label(contentFrame, isUser and "你" or "Codex", 10, isUser and COLORS.userBorder or COLORS.accentBright, Enum.Font.GothamBold, {
+        local authorLabel = label(contentFrame, isUser and "你" or "Codex", 10, isUser and COLORS.userBorder or COLORS.accentBright, FONT_BOLD, {
             Size = UDim2.new(1, -60, 0, 16),
         })
         if not isUser then
-            label(contentFrame, state.selectedModel.name, 9, COLORS.muted, Enum.Font.Gotham, {
+            label(contentFrame, state.selectedModel.name, 9, COLORS.muted, FONT_REGULAR, {
                 AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 1),
                 Size = UDim2.fromOffset(160, 14), TextXAlignment = Enum.TextXAlignment.Right,
             })
@@ -1254,7 +1251,7 @@ local function buildInterface()
             authorLabel.TextColor3 = isUser and COLORS.userBorder or COLORS.accentBright
         end)
 
-        local textLabel = label(bodyFrame, "", 12, COLORS.text, Enum.Font.Gotham, {
+        local textLabel = label(bodyFrame, "", 12, COLORS.text, FONT_REGULAR, {
             Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
             TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top,
         })
@@ -1265,7 +1262,7 @@ local function buildInterface()
         if opts and opts.code then
             textLabel:Destroy()
             if opts.text and opts.text ~= "" then
-                local pre = label(bodyFrame, "", 12, COLORS.text, Enum.Font.Gotham, {
+                local pre = label(bodyFrame, "", 12, COLORS.text, FONT_REGULAR, {
                     Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
                     TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top,
                 })
@@ -1307,11 +1304,11 @@ local function buildInterface()
             BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 140),
             LayoutOrder = 0, Parent = conversation,
         })
-        local welcomeTitle = label(welcome, "你想构建什么？", 20, COLORS.text, Enum.Font.GothamBold, {
+        local welcomeTitle = label(welcome, "你想构建什么？", 20, COLORS.text, FONT_BOLD, {
             Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 30),
             TextXAlignment = Enum.TextXAlignment.Center,
         })
-        local welcomeSub = label(welcome, "把想法交给 Codex", 11, COLORS.muted, Enum.Font.Gotham, {
+        local welcomeSub = label(welcome, "把想法交给 Codex", 11, COLORS.muted, FONT_REGULAR, {
             Position = UDim2.fromOffset(0, 54), Size = UDim2.new(1, 0, 0, 18),
             TextXAlignment = Enum.TextXAlignment.Center,
         })
@@ -1350,10 +1347,10 @@ local function buildInterface()
     promptBox = new("TextBox", {
         PlaceholderText = "让 Codex 构建、调试、解释...",
         PlaceholderColor3 = COLORS.muted, Text = "",
-        TextColor3 = COLORS.text, TextSize = 12, Font = Enum.Font.Gotham,
+        TextColor3 = COLORS.text, TextSize = 12, Font = FONT_REGULAR,
         TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
         TextWrapped = true, MultiLine = true, ClearTextOnFocus = false,
-        BackgroundTransparency = 1,
+        BackgroundTransparency = 1, TextTransparency = 0,
         Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 1, -38),
         Parent = composer,
     })
@@ -1387,10 +1384,10 @@ local function buildInterface()
         end
     end)
 
-    local hint = label(composer, "Enter 发送", 9, COLORS.muted, Enum.Font.Gotham, {
+    local hint = label(composer, "Enter 发送", 9, COLORS.muted, FONT_REGULAR, {
         Position = UDim2.fromOffset(54, 52), Size = UDim2.fromOffset(200, 14),
     })
-    local tokenLabel = label(composer, "tokens: 0 / ∞", 9, COLORS.muted, Enum.Font.Gotham, {
+    local tokenLabel = label(composer, "tokens: 0 / ∞", 9, COLORS.muted, FONT_REGULAR, {
         AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -92, 0, 52),
         Size = UDim2.fromOffset(120, 14), TextXAlignment = Enum.TextXAlignment.Right,
     })
@@ -1408,7 +1405,7 @@ local function buildInterface()
         AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 48),
         Size = UDim2.fromOffset(30, 22),
         BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
-        TextSize = 14, Font = Enum.Font.GothamBold,
+        TextSize = 14, Font = FONT_BOLD,
     })
 
     local function updateModel(model)
@@ -1434,13 +1431,13 @@ local function buildInterface()
             ZIndex = 22, Parent = modelItem,
         })
         corner(dot, 4)
-        local mname = label(modelItem, model.name, 11, COLORS.text, Enum.Font.GothamMedium, {
+        local mname = label(modelItem, model.name, 11, COLORS.text, FONT_SEMI, {
             Position = UDim2.fromOffset(24, 5), Size = UDim2.fromOffset(150, 16), ZIndex = 22,
         })
-        local mdesc = label(modelItem, model.description, 9, COLORS.muted, Enum.Font.Gotham, {
+        local mdesc = label(modelItem, model.description, 9, COLORS.muted, FONT_REGULAR, {
             Position = UDim2.fromOffset(24, 22), Size = UDim2.fromOffset(190, 15), ZIndex = 22,
         })
-        label(modelItem, model.context, 9, model.color, Enum.Font.GothamMedium, {
+        label(modelItem, model.context, 9, model.color, FONT_SEMI, {
             AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
             Size = UDim2.fromOffset(60, 14), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 22,
         })
@@ -1629,9 +1626,7 @@ local function buildInterface()
         Size = UDim2.fromScale(1, 1), ZIndex = 40, Parent = gui,
     })
 
-    -- ============================================================
     -- 设置面板
-    -- ============================================================
     local settingsPanel = new("Frame", {
         Visible = false, AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(440, 340),
@@ -1648,7 +1643,7 @@ local function buildInterface()
         Size = UDim2.new(1, -32, 0, 1), ZIndex = 51, Parent = settingsPanel,
     })
 
-    local settingsTitle = label(settingsPanel, "设置", 15, COLORS.text, Enum.Font.GothamBold, {
+    local settingsTitle = label(settingsPanel, "设置", 15, COLORS.text, FONT_BOLD, {
         Position = UDim2.fromOffset(16, 14), Size = UDim2.fromOffset(200, 22), ZIndex = 51,
     })
     local settingsClose = button(settingsPanel, "×", {
@@ -1657,7 +1652,7 @@ local function buildInterface()
         TextColor3 = COLORS.muted, TextSize = 16, ZIndex = 51,
     })
 
-    label(settingsPanel, "UI 主题", 9, COLORS.muted, Enum.Font.GothamBold, {
+    label(settingsPanel, "UI 主题", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.fromOffset(16, 50), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local themeButtons = {}
@@ -1669,7 +1664,7 @@ local function buildInterface()
             Size = UDim2.fromOffset(92, 30),
             BackgroundColor3 = (CONFIG.THEME == key) and COLORS.accent or COLORS.panelRaised,
             TextColor3 = (CONFIG.THEME == key) and COLORS.canvas or COLORS.text,
-            TextSize = 11, Font = Enum.Font.GothamBold, ZIndex = 51,
+            TextSize = 11, Font = FONT_BOLD, ZIndex = 51,
         })
         b.MouseButton1Click:Connect(function()
             if CONFIG.THEME == key then return end
@@ -1686,7 +1681,7 @@ local function buildInterface()
         table.insert(themeButtons, b)
     end
 
-    local keyLabel = label(settingsPanel, "API KEY", 9, COLORS.muted, Enum.Font.GothamBold, {
+    label(settingsPanel, "API KEY", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.fromOffset(16, 108), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local keyInput = new("TextBox", {
@@ -1694,7 +1689,7 @@ local function buildInterface()
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         PlaceholderText = "sk-...", PlaceholderColor3 = COLORS.muted,
         Text = CONFIG.API_KEY, TextColor3 = COLORS.text, TextSize = 10,
-        Font = Enum.Font.Code, ClearTextOnFocus = false, ZIndex = 51,
+        Font = FONT_CODE, ClearTextOnFocus = false, TextTransparency = 0, ZIndex = 51,
         Parent = settingsPanel,
     })
     corner(keyInput, 6)
@@ -1708,7 +1703,7 @@ local function buildInterface()
         keyInput.TextColor3 = COLORS.text
     end)
 
-    local tokenLabel2 = label(settingsPanel, "TOKEN 限制", 9, COLORS.muted, Enum.Font.GothamBold, {
+    label(settingsPanel, "TOKEN 限制", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.fromOffset(16, 166), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local tokenToggle = button(settingsPanel, "", {
@@ -1722,7 +1717,7 @@ local function buildInterface()
         ZIndex = 52, Parent = tokenToggle,
     })
     corner(tokenKnob, 7)
-    label(settingsPanel, "启用 Token 限制", 11, COLORS.text, Enum.Font.GothamMedium, {
+    label(settingsPanel, "启用 Token 限制", 11, COLORS.text, FONT_SEMI, {
         Position = UDim2.fromOffset(62, 180), Size = UDim2.fromOffset(200, 20), ZIndex = 51,
     })
     tokenToggle.MouseButton1Click:Connect(function()
@@ -1737,14 +1732,14 @@ local function buildInterface()
         updateTokenDisplay()
     end)
 
-    label(settingsPanel, "上下文上限", 9, COLORS.muted, Enum.Font.GothamBold, {
+    label(settingsPanel, "上下文上限", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.fromOffset(200, 166), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local limitInput = new("TextBox", {
         Position = UDim2.fromOffset(200, 182), Size = UDim2.new(0, 160, 0, 28),
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         Text = tostring(CONFIG.TOKEN_LIMIT), TextColor3 = COLORS.text,
-        TextSize = 10, Font = Enum.Font.Code, ClearTextOnFocus = false,
+        TextSize = 10, Font = FONT_CODE, ClearTextOnFocus = false, TextTransparency = 0,
         ZIndex = 51, Parent = settingsPanel,
     })
     corner(limitInput, 6)
@@ -1764,7 +1759,7 @@ local function buildInterface()
         limitInput.TextColor3 = COLORS.text
     end)
 
-    label(settingsPanel, "自动执行", 9, COLORS.muted, Enum.Font.GothamBold, {
+    label(settingsPanel, "自动执行", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.fromOffset(16, 220), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local autoToggle = button(settingsPanel, "", {
@@ -1778,7 +1773,7 @@ local function buildInterface()
         ZIndex = 52, Parent = autoToggle,
     })
     corner(autoKnob, 7)
-    label(settingsPanel, "AI 返回代码直接执行", 11, COLORS.text, Enum.Font.GothamMedium, {
+    label(settingsPanel, "AI 返回代码直接执行", 11, COLORS.text, FONT_SEMI, {
         Position = UDim2.fromOffset(62, 234), Size = UDim2.fromOffset(200, 20), ZIndex = 51,
     })
     autoToggle.MouseButton1Click:Connect(function()
@@ -1794,14 +1789,14 @@ local function buildInterface()
         end
     end)
 
-    label(settingsPanel, "单次回复上限", 9, COLORS.muted, Enum.Font.GothamBold, {
+    label(settingsPanel, "单次回复上限", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.fromOffset(200, 220), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
     })
     local replyInput = new("TextBox", {
         Position = UDim2.fromOffset(200, 236), Size = UDim2.new(0, 160, 0, 28),
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         Text = tostring(CONFIG.TOKEN_PER_REPLY), TextColor3 = COLORS.text,
-        TextSize = 10, Font = Enum.Font.Code, ClearTextOnFocus = false,
+        TextSize = 10, Font = FONT_CODE, ClearTextOnFocus = false, TextTransparency = 0,
         ZIndex = 51, Parent = settingsPanel,
     })
     corner(replyInput, 6)
@@ -1859,16 +1854,8 @@ local function buildInterface()
         showToast("已清空对话")
     end)
 
-    -- ============================================================
-    -- 全局主题应用
-    -- ============================================================
+    -- 主题全局回调
     registerThemeCallback(function()
-        backdrop.BackgroundColor3 = COLORS.canvas
-        backdropGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, COLORS.backdropTop),
-            ColorSequenceKeypoint.new(1, COLORS.backdropBottom),
-        })
-
         shell.BackgroundColor3 = COLORS.shell
         shell.BackgroundTransparency = COLORS.shellTransparency
         shellStroke.Color = COLORS.border
@@ -1927,18 +1914,12 @@ local function buildInterface()
         toast.BackgroundColor3 = COLORS.panelRaised
         toast.TextColor3 = COLORS.text
 
-        -- 滑动条主题
         levelSlider.BackgroundColor3 = COLORS.trackBg
         levelTrackStroke.Color = COLORS.trackBorder
-        levelFillGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, COLORS.fillStart),
-            ColorSequenceKeypoint.new(1, COLORS.fillEnd),
-        })
         levelKnob.BackgroundColor3 = COLORS.knobColor
         levelKnobStroke.Color = COLORS.knobBorder
         levelTitleLabel.TextColor3 = COLORS.muted
 
-        -- 重新按当前等级设置颜色
         setLevel(currentLevel, false)
     end)
 
@@ -1964,7 +1945,7 @@ local function buildInterface()
     local ball = new("TextButton", {
         Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 20, 0.5, -23),
         BackgroundColor3 = COLORS.accent, Text = "AI", TextColor3 = COLORS.canvas,
-        TextSize = 13, Font = Enum.Font.GothamBold, BorderSizePixel = 0,
+        TextSize = 13, Font = FONT_BOLD, BorderSizePixel = 0,
         Visible = false, Active = true, Parent = gui,
     })
     corner(ball, 23)
@@ -2031,6 +2012,10 @@ local function buildInterface()
 
     addWelcome()
     updateTokenDisplay()
+    -- 初始调用一次主题回调，确保滑动条颜色正确
+    for _, cb in ipairs(themeCallbacks) do
+        pcall(cb)
+    end
     setLevel(currentLevel, false)
 end
 
