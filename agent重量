@@ -1,5 +1,5 @@
 --!nonstrict
--- Codex Interface — DeepSeek Agent (Slider Edition)
+-- Codex Interface — DeepSeek Agent (Slider on Main)
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -36,6 +36,10 @@ local REASONING_LEVELS = {
     { id = "extreme", name = "极高", desc = "多步验证" },
     { id = "supreme", name = "顶级", desc = "穷尽推理" },
 }
+
+local PURPLE        = Color3.fromRGB(180, 130, 255)
+local PURPLE_BRIGHT = Color3.fromRGB(220, 170, 255)
+local PURPLE_DARK   = Color3.fromRGB(130, 80, 220)
 
 local BASE_PROMPT = [[
 你是 Roblox Luau Agent，运行在执行器环境中。你的唯一目标是：用最少的步骤，把用户交代的事做完。
@@ -620,6 +624,9 @@ local function buildInterface()
     })
     gradient(main, Color3.fromRGB(11, 14, 24), COLORS.canvas, 90)
 
+    -- ============================================================
+    -- Header
+    -- ============================================================
     local header = new("Frame", {
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         Size = UDim2.new(1, 0, 0, 46), Parent = main,
@@ -633,10 +640,7 @@ local function buildInterface()
     })
 
     local taskTitle = label(header, state.taskTitle, 13, COLORS.text, Enum.Font.GothamBold, {
-        Position = UDim2.fromOffset(34, 8), Size = UDim2.new(0.4, 0, 0, 18),
-    })
-    local levelText = label(header, "等级：中", 9, COLORS.muted, Enum.Font.Gotham, {
-        Position = UDim2.fromOffset(34, 26), Size = UDim2.fromOffset(100, 14),
+        Position = UDim2.fromOffset(34, 12), Size = UDim2.new(0.5, 0, 0, 20),
     })
 
     local modelButton = button(header, "", {
@@ -675,10 +679,247 @@ local function buildInterface()
     padding(modelMenu, 6, 6, 6, 6)
     new("UIListLayout", {Padding = UDim.new(0, 4), Parent = modelMenu})
 
+    -- ============================================================
+    -- 推理等级滑动条（主界面）
+    -- ============================================================
+    local levelBar = new("Frame", {
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Position = UDim2.fromOffset(0, 46),
+        Size = UDim2.new(1, 0, 0, 78),
+        ZIndex = 5,
+        Parent = main,
+    })
+
+    -- 上下分隔线
+    new("Frame", {
+        BackgroundColor3 = COLORS.border, BackgroundTransparency = 0.6,
+        BorderSizePixel = 0, Position = UDim2.new(0, 16, 0, 0),
+        Size = UDim2.new(1, -32, 0, 1), Parent = levelBar,
+    })
+    new("Frame", {
+        BackgroundColor3 = COLORS.border, BackgroundTransparency = 0.6,
+        BorderSizePixel = 0, Position = UDim2.new(0, 16, 1, -1),
+        Size = UDim2.new(1, -32, 0, 1), Parent = levelBar,
+    })
+
+    label(levelBar, "推理等级", 9, COLORS.muted, Enum.Font.GothamBold, {
+        Position = UDim2.fromOffset(20, 8),
+        Size = UDim2.fromOffset(100, 16),
+        ZIndex = 6,
+    })
+
+    local levelValueText = label(levelBar, REASONING_LEVELS[currentLevel].name, 11, COLORS.accentBright, Enum.Font.GothamBold, {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -20, 0, 6),
+        Size = UDim2.fromOffset(100, 18),
+        TextXAlignment = Enum.TextXAlignment.Right,
+        ZIndex = 6,
+    })
+
+    local levelSlider = new("Frame", {
+        Position = UDim2.fromOffset(40, 34),
+        Size = UDim2.new(1, -80, 0, 12),
+        BackgroundColor3 = COLORS.panelRaised,
+        BorderSizePixel = 0,
+        Active = true,
+        ZIndex = 6,
+        Parent = levelBar,
+    })
+    corner(levelSlider, 6)
+    local levelTrackStroke = stroke(levelSlider, COLORS.border, 0.35, 1)
+
+    local levelFill = new("Frame", {
+        Size = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 1, 0),
+        BackgroundColor3 = COLORS.accent,
+        BorderSizePixel = 0,
+        ZIndex = 7,
+        Parent = levelSlider,
+    })
+    corner(levelFill, 6)
+    local levelFillGradient = gradient(levelFill, COLORS.accentBright, COLORS.accent, 0)
+
+    local particleLayer = new("Frame", {
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+        Size = UDim2.fromScale(1, 1),
+        Visible = currentLevel == #REASONING_LEVELS,
+        ZIndex = 8,
+        Parent = levelSlider,
+    })
+
+    local levelParticles = {}
+    for i = 1, 20 do
+        local psize = (i % 4 == 0) and 4 or (i % 3 == 0 and 3 or 2)
+        local particle = new("Frame", {
+            BackgroundColor3 = PURPLE_BRIGHT,
+            BackgroundTransparency = 1,
+            BorderSizePixel = 0,
+            Size = UDim2.fromOffset(psize, psize),
+            ZIndex = 8,
+            Parent = particleLayer,
+        })
+        corner(particle, 3)
+        table.insert(levelParticles, {
+            node = particle,
+            seed = i / 20,
+            speed = 0.06 + (i % 5) * 0.025,
+            wave = i * 0.65,
+        })
+    end
+
+    AnimRegistry:add(particleLayer, function(dt, t)
+        local visible = currentLevel == #REASONING_LEVELS
+        particleLayer.Visible = visible
+        if not visible then return end
+        for _, particle in ipairs(levelParticles) do
+            local phase = (t * particle.speed + particle.seed) % 1
+            local y = 0.5 + math.sin(t * 2.8 + particle.wave) * 0.32
+            particle.node.Position = UDim2.new(phase, -2, y, -2)
+            local alpha = 0.08 + math.abs(math.sin(t * 3 + particle.wave)) * 0.75
+            particle.node.BackgroundTransparency = alpha
+            local r = 190 + math.sin(t * 2 + particle.wave) * 40
+            local g = 130 + math.cos(t * 1.7 + particle.wave) * 40
+            local b = 255
+            particle.node.BackgroundColor3 = Color3.fromRGB(r, g, b)
+        end
+    end)
+
+    local levelLabels = {}
+    for i, level in ipairs(REASONING_LEVELS) do
+        local progress = (i - 1) / (#REASONING_LEVELS - 1)
+
+        local tick = new("Frame", {
+            AnchorPoint = Vector2.new(0.5, 0.5),
+            Position = UDim2.new(progress, 0, 0.5, 0),
+            Size = UDim2.fromOffset(5, 5),
+            BackgroundColor3 = COLORS.text,
+            BackgroundTransparency = 0.4,
+            BorderSizePixel = 0,
+            ZIndex = 9,
+            Parent = levelSlider,
+        })
+        corner(tick, 3)
+
+        local levelLabel = label(levelBar, level.name, 9,
+            i == currentLevel and COLORS.accentBright or COLORS.muted,
+            Enum.Font.GothamMedium, {
+                AnchorPoint = Vector2.new(0.5, 0),
+                Position = UDim2.new(progress, 40 - progress * 80, 0, 54),
+                Size = UDim2.fromOffset(54, 14),
+                TextXAlignment = Enum.TextXAlignment.Center,
+                ZIndex = 6,
+            })
+        table.insert(levelLabels, levelLabel)
+    end
+
+    local levelKnob = new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 0.5, 0),
+        Size = UDim2.fromOffset(22, 22),
+        BackgroundColor3 = COLORS.accentBright,
+        BorderSizePixel = 0,
+        Active = true,
+        ZIndex = 10,
+        Parent = levelSlider,
+    })
+    corner(levelKnob, 11)
+    local levelKnobStroke = stroke(levelKnob, COLORS.text, 0.25, 1)
+
+    local levelDragging = false
+
+    local function setLevel(index, announce)
+        currentLevel = math.clamp(index, 1, #REASONING_LEVELS)
+        local progress = (currentLevel - 1) / (#REASONING_LEVELS - 1)
+        local tweenInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+        local isSupreme = currentLevel == #REASONING_LEVELS
+
+        TweenService:Create(levelFill, tweenInfo, {
+            Size = UDim2.new(progress, 0, 1, 0),
+        }):Play()
+        TweenService:Create(levelKnob, tweenInfo, {
+            Position = UDim2.new(progress, 0, 0.5, 0),
+        }):Play()
+
+        if isSupreme then
+            TweenService:Create(levelFill, tweenInfo, {BackgroundColor3 = PURPLE}):Play()
+            TweenService:Create(levelKnob, tweenInfo, {BackgroundColor3 = PURPLE_BRIGHT}):Play()
+            TweenService:Create(levelTrackStroke, tweenInfo, {Color = PURPLE}):Play()
+            TweenService:Create(levelKnobStroke, tweenInfo, {Color = PURPLE_BRIGHT}):Play()
+            levelFillGradient.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, PURPLE_BRIGHT),
+                ColorSequenceKeypoint.new(1, PURPLE_DARK),
+            })
+            levelValueText.TextColor3 = PURPLE_BRIGHT
+        else
+            TweenService:Create(levelFill, tweenInfo, {BackgroundColor3 = COLORS.accent}):Play()
+            TweenService:Create(levelKnob, tweenInfo, {BackgroundColor3 = COLORS.accentBright}):Play()
+            TweenService:Create(levelTrackStroke, tweenInfo, {Color = COLORS.border}):Play()
+            TweenService:Create(levelKnobStroke, tweenInfo, {Color = COLORS.text}):Play()
+            levelFillGradient.Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, COLORS.accentBright),
+                ColorSequenceKeypoint.new(1, COLORS.accent),
+            })
+            levelValueText.TextColor3 = COLORS.accentBright
+        end
+
+        levelValueText.Text = REASONING_LEVELS[currentLevel].name
+        for i, item in ipairs(levelLabels) do
+            item.TextColor3 = (i == currentLevel)
+                and (isSupreme and PURPLE_BRIGHT or COLORS.accentBright)
+                or COLORS.muted
+        end
+
+        if announce then
+            showToast("等级: " .. REASONING_LEVELS[currentLevel].name)
+        end
+    end
+
+    local function setLevelFromX(x)
+        local width = math.max(levelSlider.AbsoluteSize.X, 1)
+        local progress = math.clamp(
+            (x - levelSlider.AbsolutePosition.X) / width,
+            0,
+            1
+        )
+        local index = math.floor(progress * (#REASONING_LEVELS - 1) + 0.5) + 1
+        setLevel(index, false)
+    end
+
+    local function beginLevelDrag(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            levelDragging = true
+            setLevelFromX(input.Position.X)
+        end
+    end
+
+    levelSlider.InputBegan:Connect(beginLevelDrag)
+    levelKnob.InputBegan:Connect(beginLevelDrag)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if levelDragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch) then
+            setLevelFromX(input.Position.X)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if levelDragging and (input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch) then
+            levelDragging = false
+            setLevel(currentLevel, true)
+        end
+    end)
+
+    -- ============================================================
+    -- 对话区
+    -- ============================================================
     local conversation = new("ScrollingFrame", {
         BackgroundTransparency = 1, BorderSizePixel = 0,
-        Position = UDim2.fromOffset(16, 46),
-        Size = UDim2.new(1, -32, 1, -140),
+        Position = UDim2.fromOffset(16, 46 + 78),
+        Size = UDim2.new(1, -32, 1, -140 - 78),
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollBarThickness = 3, ScrollBarImageColor3 = COLORS.border,
         Parent = main,
@@ -1247,9 +1488,12 @@ local function buildInterface()
         Size = UDim2.fromScale(1, 1), ZIndex = 40, Parent = gui,
     })
 
+    -- ============================================================
+    -- 设置面板（无推理等级滑动条）
+    -- ============================================================
     local settingsPanel = new("Frame", {
         Visible = false, AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(440, 480),
+        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(440, 300),
         BackgroundColor3 = COLORS.panel, BorderSizePixel = 0,
         ZIndex = 50, Parent = gui,
     })
@@ -1394,186 +1638,14 @@ local function buildInterface()
         end
     end)
 
-    -- ============================================================
-    -- 推理等级滑动条
-    -- ============================================================
-    label(settingsPanel, "推理等级", 9, COLORS.muted, Enum.Font.GothamBold, {
-        Position = UDim2.fromOffset(16, 210), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
-    })
-
-    local levelSlider = new("Frame", {
-        Position = UDim2.fromOffset(18, 234),
-        Size = UDim2.new(1, -36, 0, 8),
-        BackgroundColor3 = COLORS.panelRaised,
-        BorderSizePixel = 0,
-        Active = true,
-        ZIndex = 51,
-        Parent = settingsPanel,
-    })
-    corner(levelSlider, 4)
-    stroke(levelSlider, COLORS.border, 0.35, 1)
-
-    local levelFill = new("Frame", {
-        Size = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 1, 0),
-        BackgroundColor3 = COLORS.accent,
-        BorderSizePixel = 0,
-        ZIndex = 52,
-        Parent = levelSlider,
-    })
-    corner(levelFill, 4)
-    gradient(levelFill, COLORS.accentBright, COLORS.accent, 0)
-
-    local levelKnob = new("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new((currentLevel - 1) / (#REASONING_LEVELS - 1), 0, 0.5, 0),
-        Size = UDim2.fromOffset(18, 18),
-        BackgroundColor3 = COLORS.accentBright,
-        BorderSizePixel = 0,
-        Active = true,
-        ZIndex = 54,
-        Parent = levelSlider,
-    })
-    corner(levelKnob, 9)
-    stroke(levelKnob, COLORS.text, 0.25, 1)
-
-    local particleLayer = new("Frame", {
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ClipsDescendants = true,
-        Size = UDim2.fromScale(1, 1),
-        Visible = currentLevel == #REASONING_LEVELS,
-        ZIndex = 53,
-        Parent = levelSlider,
-    })
-
-    local levelParticles = {}
-    for i = 1, 14 do
-        local particle = new("Frame", {
-            BackgroundColor3 = i % 3 == 0 and COLORS.text or COLORS.accentBright,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Size = UDim2.fromOffset(i % 3 == 0 and 3 or 2, i % 3 == 0 and 3 or 2),
-            ZIndex = 53,
-            Parent = particleLayer,
-        })
-        corner(particle, 3)
-        table.insert(levelParticles, {
-            node = particle,
-            seed = i / 14,
-            speed = 0.12 + (i % 4) * 0.035,
-            wave = i * 0.9,
-        })
-    end
-
-    AnimRegistry:add(particleLayer, function(dt, t)
-        local visible = currentLevel == #REASONING_LEVELS
-        particleLayer.Visible = visible
-        if not visible then return end
-        for _, particle in ipairs(levelParticles) do
-            local phase = (t * particle.speed + particle.seed) % 1
-            local y = 0.5 + math.sin(t * 2.8 + particle.wave) * 0.22
-            particle.node.Position = UDim2.new(phase, -1, y, -1)
-            particle.node.BackgroundTransparency = 0.12 + math.abs(math.sin(t * 3 + particle.wave)) * 0.55
-        end
-    end)
-
-    local levelLabels = {}
-    for i, level in ipairs(REASONING_LEVELS) do
-        local progress = (i - 1) / (#REASONING_LEVELS - 1)
-
-        local tick = new("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(progress, 0, 0.5, 0),
-            Size = UDim2.fromOffset(4, 4),
-            BackgroundColor3 = COLORS.text,
-            BackgroundTransparency = 0.35,
-            BorderSizePixel = 0,
-            ZIndex = 53,
-            Parent = levelSlider,
-        })
-        corner(tick, 2)
-
-        local levelLabel = label(settingsPanel, level.name, 9,
-            i == currentLevel and COLORS.accentBright or COLORS.muted,
-            Enum.Font.GothamMedium, {
-                AnchorPoint = Vector2.new(0.5, 0),
-                Position = UDim2.new(progress, 18 - progress * 36, 0, 247),
-                Size = UDim2.fromOffset(54, 16),
-                TextXAlignment = Enum.TextXAlignment.Center,
-                ZIndex = 51,
-            })
-        table.insert(levelLabels, levelLabel)
-    end
-
-    local levelDragging = false
-
-    local function setLevel(index, announce)
-        currentLevel = math.clamp(index, 1, #REASONING_LEVELS)
-        local progress = (currentLevel - 1) / (#REASONING_LEVELS - 1)
-        local tweenInfo = TweenInfo.new(0.14, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-
-        TweenService:Create(levelFill, tweenInfo, {
-            Size = UDim2.new(progress, 0, 1, 0),
-        }):Play()
-        TweenService:Create(levelKnob, tweenInfo, {
-            Position = UDim2.new(progress, 0, 0.5, 0),
-        }):Play()
-
-        levelText.Text = "等级：" .. REASONING_LEVELS[currentLevel].name
-        for i, item in ipairs(levelLabels) do
-            item.TextColor3 = i == currentLevel and COLORS.accentBright or COLORS.muted
-        end
-
-        if announce then
-            showToast("等级: " .. REASONING_LEVELS[currentLevel].name)
-        end
-    end
-
-    local function setLevelFromX(x)
-        local width = math.max(levelSlider.AbsoluteSize.X, 1)
-        local progress = math.clamp(
-            (x - levelSlider.AbsolutePosition.X) / width,
-            0,
-            1
-        )
-        local index = math.floor(progress * (#REASONING_LEVELS - 1) + 0.5) + 1
-        setLevel(index, false)
-    end
-
-    local function beginLevelDrag(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            levelDragging = true
-            setLevelFromX(input.Position.X)
-        end
-    end
-
-    levelSlider.InputBegan:Connect(beginLevelDrag)
-    levelKnob.InputBegan:Connect(beginLevelDrag)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if levelDragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch) then
-            setLevelFromX(input.Position.X)
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if levelDragging and (input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch) then
-            levelDragging = false
-            setLevel(currentLevel, true)
-        end
-    end)
-
     new("Frame", {
         BackgroundColor3 = COLORS.border, BackgroundTransparency = 0.5,
-        BorderSizePixel = 0, Position = UDim2.fromOffset(16, 274),
+        BorderSizePixel = 0, Position = UDim2.fromOffset(16, 210),
         Size = UDim2.new(1, -32, 0, 1), ZIndex = 51, Parent = settingsPanel,
     })
 
     local copyLastBtn = button(settingsPanel, "📋  复制最近代码", {
-        Position = UDim2.fromOffset(16, 288), Size = UDim2.new(0.48, -8, 0, 32),
+        Position = UDim2.fromOffset(16, 224), Size = UDim2.new(0.48, -8, 0, 32),
         BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.text,
         TextSize = 11, ZIndex = 51,
     })
@@ -1587,7 +1659,7 @@ local function buildInterface()
     end)
 
     local clearChatBtn = button(settingsPanel, "🗑  清空对话", {
-        Position = UDim2.new(0.52, 0, 0, 288), Size = UDim2.new(0.48, -8, 0, 32),
+        Position = UDim2.new(0.52, 0, 0, 224), Size = UDim2.new(0.48, -8, 0, 32),
         BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.text,
         TextSize = 11, ZIndex = 51,
     })
@@ -1694,6 +1766,7 @@ local function buildInterface()
 
     addWelcome()
     updateTokenDisplay()
+    setLevel(currentLevel, false)
 end
 
 showKeyGate(function()
