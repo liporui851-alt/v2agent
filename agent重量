@@ -1,6 +1,5 @@
 --!nonstrict
--- Codex Interface — DeepSeek Agent (All-in-One)
--- 全部功能整合版：主 UI + API 配置 + 工作区 + 手机兼容
+-- Codex Interface — 完整版（上）
 
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
@@ -14,12 +13,10 @@ local camera = workspace.CurrentCamera
 
 local VALID_KEY = "917867"
 
-_G.CodexConfig = _G.CodexConfig or {}
-
 local CONFIG = {
-    API_URL     = _G.CodexConfig.API_URL     or "https://api.deepseek.com/chat/completions",
-    API_KEY     = _G.CodexConfig.API_KEY     or "",
-    MODEL       = _G.CodexConfig.MODEL       or "deepseek-flash",
+    API_URL     = "https://api.deepseek.com/chat/completions",
+    API_KEY     = "",
+    MODEL       = "deepseek-flash",
     TEMPERATURE = 0.3,
     MAX_LOOPS   = 15,
     TOKEN_LIMIT_ENABLED = false,
@@ -28,8 +25,6 @@ local CONFIG = {
     AUTO_EXECUTE        = false,
     THEME               = "translucent",
 }
-
-_G.CodexLiveConfig = CONFIG
 
 local FONT_REGULAR = Enum.Font.SourceSans
 local FONT_BOLD    = Enum.Font.SourceSansBold
@@ -150,14 +145,99 @@ local THEMES = {
 }
 
 local COLORS = THEMES[CONFIG.THEME]
+local currentLevel = 2
+local themeCallbacks = {}
 
-local function applyTheme(name)
-    CONFIG.THEME = name
-    COLORS = THEMES[name]
+local function registerThemeCallback(fn)
+    table.insert(themeCallbacks, fn)
 end
 
+local function new(c, p)
+    local o = Instance.new(c)
+    if p then for k, v in pairs(p) do o[k] = v end end
+    return o
+end
+
+local function corner(p, r)
+    return new("UICorner", {CornerRadius = UDim.new(0, r), Parent = p})
+end
+
+local function stroke(p, color, trans, thick)
+    return new("UIStroke", {
+        Color = color, Transparency = trans or 0, Thickness = thick or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = p,
+    })
+end
+
+local function gradient(p, from, to, rot)
+    return new("UIGradient", {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, from),
+            ColorSequenceKeypoint.new(1, to),
+        }),
+        Rotation = rot or 0, Parent = p,
+    })
+end
+
+local function padding(p, l, r, t, b)
+    return new("UIPadding", {
+        PaddingLeft = UDim.new(0, l), PaddingRight = UDim.new(0, r),
+        PaddingTop = UDim.new(0, t), PaddingBottom = UDim.new(0, b),
+        Parent = p,
+    })
+end
+
+local function label(p, text, size, color, font, props)
+    local l = new("TextLabel", {
+        BackgroundTransparency = 1, Text = text, TextColor3 = color,
+        TextSize = size, Font = font or FONT_REGULAR,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+        TextTransparency = 0, Parent = p,
+    })
+    if props then for k, v in pairs(props) do l[k] = v end end
+    return l
+end
+
+local function button(p, text, props)
+    local b = new("TextButton", {
+        BackgroundColor3 = COLORS.panel, BorderSizePixel = 0,
+        Text = text, TextColor3 = COLORS.text, TextSize = 13,
+        Font = FONT_SEMI, AutoButtonColor = false,
+        TextTransparency = 0, Parent = p,
+    })
+    corner(b, 8)
+    stroke(b, COLORS.border, 0.68, 1)
+    if props then for k, v in pairs(props) do b[k] = v end end
+    return b
+end
+
+local function bindClick(btn, fn)
+    btn.MouseButton1Click:Connect(fn)
+    btn.Activated:Connect(fn)
+end
+
+local AnimRegistry = { tasks = {} }
+function AnimRegistry:add(owner, fn)
+    local t = { owner = owner, fn = fn, alive = true }
+    table.insert(self.tasks, t)
+    return t
+end
+function AnimRegistry:remove(t) t.alive = false end
+
+RunService.Heartbeat:Connect(function(dt)
+    for i = #AnimRegistry.tasks, 1, -1 do
+        local t = AnimRegistry.tasks[i]
+        if not t.alive or not t.owner or not t.owner.Parent then
+            table.remove(AnimRegistry.tasks, i)
+        else
+            pcall(t.fn, dt)
+        end
+    end
+end)
+
 local BASE_PROMPT = [[
-你是 Roblox Luau Agent，运行在执行器环境中。用最少的步骤把用户交代的事做完。
+你是 Roblox Luau Agent，运行在执行器环境。用最少的步骤把用户交代的事做完。
 
 【工具】
 ▶ run_code   {"code": "完整 Luau"}
@@ -186,27 +266,13 @@ local LEVEL_RULES = {
     supreme = "\n\n【等级：顶级】完整推理链，加边界检查，不确定选保守方案。",
 }
 
-local currentLevel = 2
-
 local function buildSystemPrompt()
-    local pluginInfo = ""
-    if _G.CodexPlugin and _G.CodexPlugin.getSummary then
-        pluginInfo = "\n\n【插件状态】" .. _G.CodexPlugin.getSummary()
-    end
-    return BASE_PROMPT .. LEVEL_RULES[REASONING_LEVELS[currentLevel].id] .. pluginInfo
+    return BASE_PROMPT .. LEVEL_RULES[REASONING_LEVELS[currentLevel].id]
 end
 
 local function estimateTokens(text)
     if not text then return 0 end
     return math.ceil(#text / 4)
-end
-
-local function estimateMessagesTokens(messages)
-    local total = 0
-    for _, m in ipairs(messages) do
-        total = total + estimateTokens(m.content) + 4
-    end
-    return total
 end
 
 local TOOLS = {}
@@ -271,40 +337,47 @@ local function autoExecute(code)
     return true, res ~= nil and tostring(res) or "执行成功"
 end
 
-local function callDeepSeek(messages)
-    local bodyTable = {
+local function callAPI(messages)
+    local body = HttpService:JSONEncode({
         model = CONFIG.MODEL,
         messages = messages,
         temperature = CONFIG.TEMPERATURE,
-    }
-    if CONFIG.TOKEN_LIMIT_ENABLED then
-        bodyTable.max_tokens = CONFIG.TOKEN_PER_REPLY
-    end
-    local body = HttpService:JSONEncode(bodyTable)
+    })
     local headers = {
         ["Content-Type"] = "application/json",
         ["Authorization"] = "Bearer " .. CONFIG.API_KEY,
     }
+    local response
     if request then
-        local ok, response = pcall(function()
+        local ok, res = pcall(function()
             return request({Url = CONFIG.API_URL, Method = "POST", Headers = headers, Body = body})
         end)
-        if not ok then return nil, "请求失败: " .. tostring(response) end
-        if response.StatusCode ~= 200 then return nil, "API 错误 " .. tostring(response.StatusCode) end
-        local data = HttpService:JSONDecode(response.Body)
-        return data.choices[1].message.content, nil
+        if not ok then return nil, "请求失败: " .. tostring(res) end
+        response = res
     else
-        local ok, response = pcall(function()
+        local ok, res = pcall(function()
             return HttpService:RequestAsync({Url = CONFIG.API_URL, Method = "POST", Headers = headers, Body = body})
         end)
-        if not ok then return nil, "请求失败: " .. tostring(response) end
-        if not response.Success then return nil, "API 错误 " .. tostring(response.StatusCode) end
-        local data = HttpService:JSONDecode(response.Body)
-        return data.choices[1].message.content, nil
+        if not ok then return nil, "请求失败: " .. tostring(res) end
+        response = res
     end
+    local okStatus = false
+    local bodyText
+    if response.StatusCode then
+        okStatus = response.StatusCode == 200
+        bodyText = response.Body
+    elseif response.Success ~= nil then
+        okStatus = response.Success
+        bodyText = response.Body
+    end
+    if not okStatus then return nil, "API 错误: " .. tostring(bodyText or "未知") end
+    local ok2, data = pcall(HttpService.JSONDecode, HttpService, bodyText)
+    if not ok2 then return nil, "解析失败" end
+    if not data.choices or not data.choices[1] then return nil, "返回格式异常" end
+    return data.choices[1].message.content, nil
 end
 
-local function parseToolCall(text)
+local function parseTool(text)
     text = text:gsub("```%w*\n", ""):gsub("```", "")
     local tool = text:match("[Tt][Oo][Oo][Ll]:%s*([%w_]+)")
     local argsJson = text:match("[Aa][Rr][Gg][Ss]:%s*(%b{})")
@@ -321,125 +394,9 @@ local function extractCode(text)
     return text:match("START%s*(.-)%s*END")
 end
 
-local AnimRegistry = { tasks = {} }
-
-function AnimRegistry:add(owner, fn)
-    local t = { owner = owner, fn = fn, alive = true }
-    table.insert(self.tasks, t)
-    return t
-end
-
-function AnimRegistry:remove(t)
-    t.alive = false
-end
-
-local animTime = 0
-RunService.Heartbeat:Connect(function(dt)
-    animTime = animTime + dt
-    for i = #AnimRegistry.tasks, 1, -1 do
-        local t = AnimRegistry.tasks[i]
-        if not t.alive or not t.owner or not t.owner.Parent then
-            table.remove(AnimRegistry.tasks, i)
-        else
-            pcall(t.fn, dt, animTime)
-        end
-    end
-end)
-
-local function new(className, properties)
-    local object = Instance.new(className)
-    if properties then
-        for property, value in pairs(properties) do
-            object[property] = value
-        end
-    end
-    return object
-end
-
-local function corner(parent, radius)
-    return new("UICorner", {CornerRadius = UDim.new(0, radius), Parent = parent})
-end
-
-local function stroke(parent, color, transparency, thickness)
-    return new("UIStroke", {
-        Color = color,
-        Transparency = transparency or 0,
-        Thickness = thickness or 1,
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-        Parent = parent,
-    })
-end
-
-local function gradient(parent, fromColor, toColor, rotation)
-    return new("UIGradient", {
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, fromColor),
-            ColorSequenceKeypoint.new(1, toColor),
-        }),
-        Rotation = rotation or 0,
-        Parent = parent,
-    })
-end
-
-local function padding(parent, left, right, top, bottom)
-    return new("UIPadding", {
-        PaddingLeft = UDim.new(0, left),
-        PaddingRight = UDim.new(0, right),
-        PaddingTop = UDim.new(0, top),
-        PaddingBottom = UDim.new(0, bottom),
-        Parent = parent,
-    })
-end
-
-local function label(parent, text, size, color, weight, properties)
-    local item = new("TextLabel", {
-        BackgroundTransparency = 1,
-        Text = text,
-        TextColor3 = color,
-        TextSize = size,
-        Font = weight or FONT_REGULAR,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Center,
-        TextTransparency = 0,
-        Parent = parent,
-    })
-    if properties then
-        for property, value in pairs(properties) do
-            item[property] = value
-        end
-    end
-    return item
-end
-
-local function button(parent, text, properties)
-    local item = new("TextButton", {
-        BackgroundColor3 = COLORS.panel,
-        BorderSizePixel = 0,
-        Text = text,
-        TextColor3 = COLORS.text,
-        TextSize = 13,
-        Font = FONT_SEMI,
-        AutoButtonColor = false,
-        TextTransparency = 0,
-        Parent = parent,
-    })
-    corner(item, 8)
-    stroke(item, COLORS.border, 0.68, 1)
-    if properties then
-        for property, value in pairs(properties) do
-            item[property] = value
-        end
-    end
-    local baseColor = properties and properties.BackgroundColor3 or COLORS.panel
-    item.MouseEnter:Connect(function()
-        TweenService:Create(item, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.panelRaised}):Play()
-    end)
-    item.MouseLeave:Connect(function()
-        TweenService:Create(item, TweenInfo.new(0.12), {BackgroundColor3 = baseColor}):Play()
-    end)
-    return item
-end
-
+-- ============================================================
+-- 卡密
+-- ============================================================
 local function showKeyGate(onSuccess)
     local gate = new("ScreenGui", {
         Name = "CodexKeyGate", ResetOnSpawn = false,
@@ -494,17 +451,17 @@ local function showKeyGate(onSuccess)
             input.Text = ""
         end
     end
-    submit.MouseButton1Click:Connect(try)
-    submit.Activated:Connect(try)
+    bindClick(submit, try)
     input.FocusLost:Connect(function(enter) if enter then try() end end)
 end
 
+-- ============================================================
+-- 主 UI 构建
+-- ============================================================
 local function buildInterface()
     local state = {
         selectedModel = MODELS[1],
         modelMenuOpen = false,
-        settingsOpen = false,
-        sidebarCollapsed = false,
         running = false,
         requestToken = 0,
         taskTitle = "新任务",
@@ -536,23 +493,10 @@ local function buildInterface()
         refreshScale()
     end)
 
-    local themeCallbacks = {}
-    local function registerThemeCallback(fn)
-        table.insert(themeCallbacks, fn)
-    end
-
-    local backdrop = new("Frame", {
+    new("Frame", {
         BackgroundTransparency = 1, BorderSizePixel = 0,
         Size = UDim2.fromScale(1, 1), Parent = gui,
     })
-
-    local shellShadow = new("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 8),
-        Size = UDim2.new(0, 728, 0, 488),
-        BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0.52,
-        BorderSizePixel = 0, Parent = backdrop,
-    })
-    corner(shellShadow, 14)
 
     local shell = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
@@ -560,69 +504,140 @@ local function buildInterface()
         BackgroundColor3 = COLORS.shell,
         BackgroundTransparency = COLORS.shellTransparency,
         BorderSizePixel = 0,
-        ClipsDescendants = true, Active = true, Parent = backdrop,
+        ClipsDescendants = true, Active = true, Parent = gui,
     })
     corner(shell, 12)
     local shellStroke = stroke(shell, COLORS.border, 0.2, 1)
     local shellGradient = gradient(shell, COLORS.shell, COLORS.panel, 90)
 
+    -- 粒子背景
+    local particleLayer = new("Frame", {
+        BackgroundTransparency = 1, BorderSizePixel = 0,
+        ClipsDescendants = true, Size = UDim2.fromScale(1, 1),
+        ZIndex = 0, Parent = shell,
+    })
+    corner(particleLayer, 12)
+    local particles = {}
+    for i = 1, 30 do
+        local size = math.random(2, 4)
+        local p = new("Frame", {
+            BackgroundColor3 = i % 3 == 0 and PURPLE or COLORS.accent,
+            BackgroundTransparency = 0.5, BorderSizePixel = 0,
+            Size = UDim2.fromOffset(size, size),
+            Position = UDim2.new(math.random(), 0, math.random(), 0),
+            ZIndex = 1, Parent = particleLayer,
+        })
+        corner(p, math.floor(size / 2))
+        table.insert(particles, {
+            node = p,
+            speedX = (math.random() - 0.5) * 0.03,
+            speedY = -(0.01 + math.random() * 0.03),
+            phase = math.random() * math.pi * 2,
+        })
+    end
+    AnimRegistry:add(particleLayer, function(dt)
+        for _, p in ipairs(particles) do
+            local pos = p.node.Position
+            local nx = pos.X.Scale + p.speedX * dt
+            local ny = pos.Y.Scale + p.speedY * dt
+            if ny < -0.05 then ny = 1.05 end
+            if nx < -0.05 then nx = 1.05 end
+            if nx > 1.05 then nx = -0.05 end
+            p.node.Position = UDim2.new(nx, 0, ny, 0)
+            p.phase = p.phase + dt * 2
+            p.node.BackgroundTransparency = 0.4 + math.sin(p.phase) * 0.3
+        end
+    end)
+
+    -- 渐变边框
+    local shellGradStroke = stroke(shell, COLORS.accent, 0.35, 2)
+    local shellGrad = gradient(shellGradStroke, COLORS.accent, PURPLE, 0)
+    local rotation = 0
+    AnimRegistry:add(shellGradStroke, function(dt)
+        rotation = (rotation + dt * 40) % 360
+        shellGrad.Rotation = rotation
+    end)
+
+    -- 扫描线
+    local scanHolder = new("Frame", {
+        BackgroundTransparency = 1, BorderSizePixel = 0,
+        ClipsDescendants = true, Size = UDim2.fromScale(1, 1),
+        ZIndex = 2, Parent = shell,
+    })
+    corner(scanHolder, 12)
+    local scanLine = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 2),
+        BackgroundColor3 = COLORS.accentBright,
+        BackgroundTransparency = 0.85,
+        BorderSizePixel = 0, ZIndex = 2, Parent = scanHolder,
+    })
+    local scanPos = 0
+    AnimRegistry:add(scanHolder, function(dt)
+        scanPos = (scanPos + dt * 0.15) % 1
+        scanLine.Position = UDim2.new(0, 0, scanPos, 0)
+    end)
+
+    -- 玻璃高光
+    local glassHL = new("Frame", {
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+        BackgroundTransparency = 0.94, BorderSizePixel = 0,
+        Size = UDim2.new(1, 0, 0, 60),
+        ZIndex = 2, Parent = shell,
+    })
+    corner(glassHL, 12)
+    new("UIGradient", {
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0),
+            NumberSequenceKeypoint.new(1, 1),
+        }),
+        Rotation = 90, Parent = glassHL,
+    })
+
+    -- 顶栏
     local topbar = new("Frame", {
         BackgroundColor3 = COLORS.shell,
         BackgroundTransparency = COLORS.shellTransparency,
         BorderSizePixel = 0,
-        Size = UDim2.new(1, 0, 0, 44), Parent = shell,
+        Size = UDim2.new(1, 0, 0, 44), ZIndex = 5, Parent = shell,
     })
     padding(topbar, 14, 14, 0, 0)
-    local topbarGradient = gradient(topbar, COLORS.panel, COLORS.shell, 0)
-
-    new("Frame", {
-        BackgroundColor3 = COLORS.accent, BackgroundTransparency = 0.35,
-        BorderSizePixel = 0, Position = UDim2.new(0, 14, 1, -1),
-        Size = UDim2.new(1, -28, 0, 1), Parent = topbar,
-    })
 
     local brandMark = new("Frame", {
         BackgroundColor3 = COLORS.accent, BorderSizePixel = 0,
         Size = UDim2.fromOffset(22, 22), Position = UDim2.fromOffset(0, 11),
-        Parent = topbar,
+        ZIndex = 6, Parent = topbar,
     })
     corner(brandMark, 6)
     label(brandMark, "✦", 13, COLORS.canvas, FONT_BOLD, {
-        Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
+        Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 7,
     })
-    local brandLabel = label(topbar, "Codex", 14, COLORS.text, FONT_BOLD, {
-        Position = UDim2.fromOffset(30, 6), Size = UDim2.new(0, 100, 0, 20),
+    local brandTitle = label(topbar, "Codex", 14, COLORS.text, FONT_BOLD, {
+        Position = UDim2.fromOffset(30, 6), Size = UDim2.new(0, 100, 0, 20), ZIndex = 6,
     })
     local brandSub = label(topbar, "DeepSeek Agent", 10, COLORS.muted, FONT_REGULAR, {
-        Position = UDim2.fromOffset(30, 25), Size = UDim2.new(0, 160, 0, 14),
+        Position = UDim2.fromOffset(30, 25), Size = UDim2.new(0, 160, 0, 14), ZIndex = 6,
     })
-
-    local minimizeBtn = button(topbar, "—", {
-        AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -70, 0.5, 0),
-        Size = UDim2.fromOffset(28, 26), BackgroundColor3 = COLORS.shell,
-        TextColor3 = COLORS.muted, TextSize = 15, Font = FONT_BOLD,
-    })
-    minimizeBtn.MouseEnter:Connect(function()
-        TweenService:Create(minimizeBtn, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas}):Play()
-    end)
-    minimizeBtn.MouseLeave:Connect(function()
-        TweenService:Create(minimizeBtn, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.shell, TextColor3 = COLORS.muted}):Play()
-    end)
 
     local closeBtn = button(topbar, "×", {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
         Size = UDim2.fromOffset(28, 26), BackgroundColor3 = COLORS.shell,
-        TextColor3 = COLORS.muted, TextSize = 16, Font = FONT_BOLD,
+        TextColor3 = COLORS.muted, TextSize = 16, Font = FONT_BOLD, ZIndex = 6,
     })
-    closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
-    closeBtn.Activated:Connect(function() gui:Destroy() end)
-    closeBtn.MouseEnter:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.danger, TextColor3 = COLORS.canvas}):Play()
-    end)
-    closeBtn.MouseLeave:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.12), {BackgroundColor3 = COLORS.shell, TextColor3 = COLORS.muted}):Play()
-    end)
+    bindClick(closeBtn, function() gui:Destroy() end)
 
+    local minimizeBtn = button(topbar, "—", {
+        AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -36, 0.5, 0),
+        Size = UDim2.fromOffset(28, 26), BackgroundColor3 = COLORS.shell,
+        TextColor3 = COLORS.muted, TextSize = 15, Font = FONT_BOLD, ZIndex = 6,
+    })
+
+    local settingsBtn = button(topbar, "⚙", {
+        AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -72, 0.5, 0),
+        Size = UDim2.fromOffset(28, 26), BackgroundColor3 = COLORS.shell,
+        TextColor3 = COLORS.muted, TextSize = 14, Font = FONT_BOLD, ZIndex = 6,
+    })
+
+    -- 拖动
     local dragging, dragStart, startPos
     topbar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
@@ -640,10 +655,6 @@ local function buildInterface()
                 startPos.X.Scale, startPos.X.Offset + delta.X,
                 startPos.Y.Scale, startPos.Y.Offset + delta.Y
             )
-            shellShadow.Position = UDim2.new(
-                shell.Position.X.Scale, shell.Position.X.Offset,
-                shell.Position.Y.Scale, shell.Position.Y.Offset + 8
-            )
         end
     end)
     UserInputService.InputEnded:Connect(function(input)
@@ -653,150 +664,118 @@ local function buildInterface()
         end
     end)
 
-    local body = new("Frame", {
-        BackgroundTransparency = 1,
-        Position = UDim2.fromOffset(0, 44), Size = UDim2.new(1, 0, 1, -44),
-        Parent = shell,
-    })
-
-    local SIDEBAR_W = 180
-    local sidebar = new("Frame", {
-        BackgroundColor3 = COLORS.sidebar,
-        BackgroundTransparency = COLORS.shellTransparency,
-        BorderSizePixel = 0,
-        Size = UDim2.new(0, SIDEBAR_W, 1, 0), Parent = body,
-    })
-    padding(sidebar, 10, 10, 10, 10)
-    local sidebarGradient = gradient(sidebar, COLORS.panel, COLORS.sidebar, 90)
-
-    local newTaskButton = button(sidebar, "+  新建任务", {
-        Size = UDim2.new(1, 0, 0, 32),
-        BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
-        Font = FONT_BOLD, TextSize = 12,
-    })
-
-    label(sidebar, "任务", 9, COLORS.muted, FONT_BOLD, {
-        Position = UDim2.fromOffset(4, 44), Size = UDim2.new(1, -8, 0, 16),
-    })
-
-    new("ScrollingFrame", {
-        Name = "TaskList",
-        BackgroundTransparency = 1, BorderSizePixel = 0,
-        Position = UDim2.fromOffset(0, 64),
-        Size = UDim2.new(1, 0, 1, -130),
-        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        ScrollBarThickness = 2, ScrollBarImageColor3 = COLORS.border,
-        Parent = sidebar,
-    })
-
-    label(sidebar, "工作区", 9, COLORS.muted, FONT_BOLD, {
-        Position = UDim2.new(0, 4, 1, -64), Size = UDim2.new(1, -8, 0, 16),
-    })
-    local workspaceButton = button(sidebar, "◈  工作区", {
-        Position = UDim2.new(0, 0, 1, -46), Size = UDim2.new(1, 0, 0, 28),
-        BackgroundColor3 = COLORS.sidebar, TextColor3 = COLORS.muted,
-        TextXAlignment = Enum.TextXAlignment.Left, TextSize = 11,
-    })
-    padding(workspaceButton, 6, 0, 0, 0)
-
-    local settingsButton = button(sidebar, "⚙  设置", {
-        Position = UDim2.new(0, 0, 1, -14), Size = UDim2.new(1, 0, 0, 28),
-        BackgroundColor3 = COLORS.sidebar, TextColor3 = COLORS.muted,
-        TextXAlignment = Enum.TextXAlignment.Left, TextSize = 11,
-    })
-    padding(settingsButton, 6, 0, 0, 0)
-
     local main = new("Frame", {
-        BackgroundColor3 = COLORS.canvas,
-        BackgroundTransparency = COLORS.shellTransparency,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(SIDEBAR_W, 0),
-        Size = UDim2.new(1, -SIDEBAR_W, 1, 0), Parent = body,
+        BackgroundTransparency = 1,
+        Position = UDim2.fromOffset(0, 44),
+        Size = UDim2.new(1, 0, 1, -44),
+        ZIndex = 5, Parent = shell,
     })
 
     local header = new("Frame", {
-        BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
-        Size = UDim2.new(1, 0, 0, 46), Parent = main,
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 46), ZIndex = 5, Parent = main,
     })
     padding(header, 16, 16, 0, 0)
 
-    local collapseButton = button(header, "☰", {
-        Size = UDim2.fromOffset(26, 26), Position = UDim2.fromOffset(0, 10),
-        BackgroundColor3 = COLORS.canvas, TextColor3 = COLORS.muted, TextSize = 14,
-    })
-
     local taskTitle = label(header, state.taskTitle, 13, COLORS.text, FONT_BOLD, {
-        Position = UDim2.fromOffset(34, 12), Size = UDim2.new(0.5, 0, 0, 20),
+        Position = UDim2.fromOffset(0, 14), Size = UDim2.new(0.5, 0, 0, 20), ZIndex = 6,
     })
 
+    -- 模型按钮
     local modelButton = button(header, "", {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0),
         Size = UDim2.fromOffset(160, 32), BackgroundColor3 = COLORS.panel,
-        TextXAlignment = Enum.TextXAlignment.Left,
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 100,
     })
     padding(modelButton, 10, 8, 0, 0)
     local modelDot = new("Frame", {
         BackgroundColor3 = state.selectedModel.color, BorderSizePixel = 0,
         Size = UDim2.fromOffset(7, 7), Position = UDim2.fromOffset(10, 12),
-        Parent = modelButton,
+        ZIndex = 101, Parent = modelButton,
     })
     corner(modelDot, 4)
     local modelName = label(modelButton, state.selectedModel.name, 11, COLORS.text, FONT_SEMI, {
-        Position = UDim2.fromOffset(24, 4), Size = UDim2.fromOffset(120, 16),
+        Position = UDim2.fromOffset(24, 4), Size = UDim2.fromOffset(120, 16), ZIndex = 101,
     })
     local modelBadge = label(modelButton, state.selectedModel.badge, 9, COLORS.muted, FONT_REGULAR, {
-        Position = UDim2.fromOffset(24, 19), Size = UDim2.fromOffset(120, 12),
+        Position = UDim2.fromOffset(24, 19), Size = UDim2.fromOffset(120, 12), ZIndex = 101,
     })
     label(modelButton, "⌄", 12, COLORS.muted, FONT_BOLD, {
         AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
-        Size = UDim2.fromOffset(16, 18), TextXAlignment = Enum.TextXAlignment.Center,
+        Size = UDim2.fromOffset(16, 18), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 101,
     })
 
+    -- 模型菜单：挂 shell 顶部，ZIndex 500
     local modelMenu = new("Frame", {
-        Visible = false, AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, 0, 1, 4),
+        Visible = false,
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -16, 0, 46),
         Size = UDim2.fromOffset(260, 0), AutomaticSize = Enum.AutomaticSize.Y,
         BackgroundColor3 = COLORS.panel, BorderSizePixel = 0,
-        ZIndex = 20, Parent = header,
+        ZIndex = 500, Parent = shell,
     })
     corner(modelMenu, 8)
-    local modelMenuStroke = stroke(modelMenu, COLORS.border, 0.1, 1)
-    local modelMenuGradient = gradient(modelMenu, COLORS.panelRaised, COLORS.panel, 90)
+    stroke(modelMenu, COLORS.border, 0.1, 1)
+    gradient(modelMenu, COLORS.panelRaised, COLORS.panel, 90)
     padding(modelMenu, 6, 6, 6, 6)
     new("UIListLayout", {Padding = UDim.new(0, 4), Parent = modelMenu})
 
+    local function updateModel(model)
+        state.selectedModel = model
+        CONFIG.MODEL = model.id
+        modelName.Text = model.name
+        modelBadge.Text = model.badge
+        modelDot.BackgroundColor3 = model.color
+        modelMenu.Visible = false
+        state.modelMenuOpen = false
+    end
+
+    for _, model in ipairs(MODELS) do
+        local item = new("TextButton", {
+            Size = UDim2.new(1, 0, 0, 44),
+            BackgroundColor3 = COLORS.panel,
+            BorderSizePixel = 0, Text = "",
+            AutoButtonColor = false, ZIndex = 501, Parent = modelMenu,
+        })
+        corner(item, 6)
+        local d = new("Frame", {
+            BackgroundColor3 = model.color, BorderSizePixel = 0,
+            Position = UDim2.fromOffset(8, 15), Size = UDim2.fromOffset(7, 7),
+            ZIndex = 502, Parent = item,
+        })
+        corner(d, 4)
+        label(item, model.name, 11, COLORS.text, FONT_SEMI, {
+            Position = UDim2.fromOffset(24, 5), Size = UDim2.fromOffset(150, 16), ZIndex = 502,
+        })
+        label(item, model.description, 9, COLORS.muted, FONT_REGULAR, {
+            Position = UDim2.fromOffset(24, 22), Size = UDim2.fromOffset(190, 15), ZIndex = 502,
+        })
+        bindClick(item, function() updateModel(model) end)
+    end
+
+    bindClick(modelButton, function()
+        state.modelMenuOpen = not state.modelMenuOpen
+        modelMenu.Visible = state.modelMenuOpen
+    end)
+
+    -- 推理等级滑动条
     local levelBar = new("Frame", {
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
+        BackgroundTransparency = 1, BorderSizePixel = 0,
         Position = UDim2.fromOffset(0, 46),
         Size = UDim2.new(1, 0, 0, 92),
-        ZIndex = 5,
-        Parent = main,
+        ZIndex = 5, Parent = main,
     })
 
-    new("Frame", {
-        BackgroundColor3 = COLORS.border, BackgroundTransparency = 0.6,
-        BorderSizePixel = 0, Position = UDim2.new(0, 16, 0, 0),
-        Size = UDim2.new(1, -32, 0, 1), Parent = levelBar,
-    })
-    new("Frame", {
-        BackgroundColor3 = COLORS.border, BackgroundTransparency = 0.6,
-        BorderSizePixel = 0, Position = UDim2.new(0, 16, 1, -1),
-        Size = UDim2.new(1, -32, 0, 1), Parent = levelBar,
-    })
-
-    local levelTitleLabel = label(levelBar, "推理等级", 9, COLORS.muted, FONT_BOLD, {
+    label(levelBar, "推理等级", 9, COLORS.muted, FONT_BOLD, {
         Position = UDim2.fromOffset(20, 8),
-        Size = UDim2.fromOffset(100, 16),
-        ZIndex = 7,
+        Size = UDim2.fromOffset(100, 16), ZIndex = 7,
     })
 
     local levelValueText = label(levelBar, REASONING_LEVELS[currentLevel].name, 11, COLORS.accentBright, FONT_BOLD, {
         AnchorPoint = Vector2.new(1, 0),
         Position = UDim2.new(1, -20, 0, 6),
         Size = UDim2.fromOffset(100, 18),
-        TextXAlignment = Enum.TextXAlignment.Right,
-        ZIndex = 7,
+        TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 7,
     })
 
     local KNOB_SIZE = 20
@@ -807,161 +786,57 @@ local function buildInterface()
         Position = UDim2.fromOffset(40, 38),
         Size = UDim2.new(1, -80, 0, TRACK_HEIGHT),
         BackgroundColor3 = COLORS.trackBg,
-        BorderSizePixel = 0,
-        Active = true,
-        ClipsDescendants = false,
-        ZIndex = 6,
+        BorderSizePixel = 0, Active = true, ZIndex = 6,
         Parent = levelBar,
     })
     corner(levelSlider, TRACK_HEIGHT / 2)
-    local levelTrackStroke = stroke(levelSlider, COLORS.trackBorder, 0.2, 1)
+    stroke(levelSlider, COLORS.trackBorder, 0.2, 1)
 
     local levelFill = new("Frame", {
         Position = UDim2.fromOffset(0, 0),
         Size = UDim2.new(0, KNOB_RADIUS, 1, 0),
         BackgroundColor3 = COLORS.accent,
-        BorderSizePixel = 0,
-        ZIndex = 7,
-        Parent = levelSlider,
+        BorderSizePixel = 0, ZIndex = 7, Parent = levelSlider,
     })
     corner(levelFill, TRACK_HEIGHT / 2)
-    local levelFillGradient = gradient(levelFill, COLORS.fillStart, COLORS.fillEnd, 0)
-
-    local particleLayer = new("Frame", {
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ClipsDescendants = true,
-        Position = UDim2.fromOffset(0, 0),
-        Size = UDim2.new(1, 0, 1, 0),
-        Visible = currentLevel == #REASONING_LEVELS,
-        ZIndex = 8,
-        Parent = levelSlider,
-    })
-    corner(particleLayer, TRACK_HEIGHT / 2)
-
-    local levelParticles = {}
-    for i = 1, 20 do
-        local psize = (i % 4 == 0) and 4 or (i % 3 == 0 and 3 or 2)
-        local particle = new("Frame", {
-            BackgroundColor3 = PURPLE_BRIGHT,
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            Size = UDim2.fromOffset(psize, psize),
-            ZIndex = 8,
-            Parent = particleLayer,
-        })
-        corner(particle, 3)
-        table.insert(levelParticles, {
-            node = particle,
-            seed = i / 20,
-            speed = 0.06 + (i % 5) * 0.025,
-            wave = i * 0.65,
-        })
-    end
-
-    AnimRegistry:add(particleLayer, function(dt, t)
-        local visible = currentLevel == #REASONING_LEVELS
-        particleLayer.Visible = visible
-        if not visible then return end
-        for _, particle in ipairs(levelParticles) do
-            local phase = (t * particle.speed + particle.seed) % 1
-            local y = 0.5 + math.sin(t * 2.8 + particle.wave) * 0.28
-            particle.node.Position = UDim2.new(phase, -2, y, -2)
-            local alpha = 0.08 + math.abs(math.sin(t * 3 + particle.wave)) * 0.75
-            particle.node.BackgroundTransparency = alpha
-            local r = 190 + math.sin(t * 2 + particle.wave) * 40
-            local g = 130 + math.cos(t * 1.7 + particle.wave) * 40
-            particle.node.BackgroundColor3 = Color3.fromRGB(r, g, 255)
-        end
-    end)
+    gradient(levelFill, COLORS.fillStart, COLORS.fillEnd, 0)
 
     local levelLabels = {}
-    for i, level in ipairs(REASONING_LEVELS) do
+    for i, lvl in ipairs(REASONING_LEVELS) do
         local progress = (i - 1) / (#REASONING_LEVELS - 1)
-
-        local tick = new("Frame", {
-            AnchorPoint = Vector2.new(0.5, 0.5),
-            Position = UDim2.new(progress, 0, 0.5, 0),
-            Size = UDim2.fromOffset(5, 5),
-            BackgroundColor3 = COLORS.text,
-            BackgroundTransparency = 0.4,
-            BorderSizePixel = 0,
-            ZIndex = 9,
-            Parent = levelSlider,
-        })
-        corner(tick, 3)
-
-        local levelLabel = label(levelBar, level.name, 9,
+        local lb = label(levelBar, lvl.name, 9,
             i == currentLevel and COLORS.accentBright or COLORS.muted,
             FONT_SEMI, {
                 AnchorPoint = Vector2.new(0.5, 0),
                 Position = UDim2.new(progress, 40 - progress * 80, 0, 70),
                 Size = UDim2.fromOffset(54, 14),
-                TextXAlignment = Enum.TextXAlignment.Center,
-                ZIndex = 7,
+                TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 7,
             })
-        table.insert(levelLabels, levelLabel)
+        table.insert(levelLabels, lb)
     end
 
     local levelKnob = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0, KNOB_RADIUS, 0.5, 0),
+        Position = UDim2.fromOffset(KNOB_RADIUS, TRACK_HEIGHT / 2),
         Size = UDim2.fromOffset(KNOB_SIZE, KNOB_SIZE),
         BackgroundColor3 = COLORS.knobColor,
-        BorderSizePixel = 0,
-        Active = true,
-        ZIndex = 10,
-        Parent = levelSlider,
+        BorderSizePixel = 0, Active = true, ZIndex = 20, Parent = levelSlider,
     })
     corner(levelKnob, KNOB_RADIUS)
-    local levelKnobStroke = stroke(levelKnob, COLORS.knobBorder, 0.2, 2)
+    stroke(levelKnob, COLORS.knobBorder, 0.2, 2)
 
     local levelDragging = false
 
-    local function setLevel(index, announce)
+    local function setLevel(index)
         currentLevel = math.clamp(index, 1, #REASONING_LEVELS)
+        local trackW = math.max(levelSlider.AbsoluteSize.X, 1)
         local progress = (currentLevel - 1) / (#REASONING_LEVELS - 1)
-        local tweenInfo = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-        local isSupreme = currentLevel == #REASONING_LEVELS
-
-        local trackW = math.max(levelSlider.AbsoluteSize.X, 200)
-        local fillW = KNOB_RADIUS + progress * (trackW - KNOB_SIZE)
         local knobX = KNOB_RADIUS + progress * (trackW - KNOB_SIZE)
-
-        TweenService:Create(levelFill, tweenInfo, {
-            Size = UDim2.fromOffset(fillW, TRACK_HEIGHT)
-        }):Play()
-        TweenService:Create(levelKnob, tweenInfo, {
-            Position = UDim2.fromOffset(knobX, TRACK_HEIGHT / 2)
-        }):Play()
-
-        if isSupreme then
-            levelFillGradient.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, PURPLE_BRIGHT),
-                ColorSequenceKeypoint.new(1, PURPLE_DARK),
-            })
-            TweenService:Create(levelTrackStroke, tweenInfo, {Color = PURPLE}):Play()
-            TweenService:Create(levelKnobStroke, tweenInfo, {Color = PURPLE_BRIGHT}):Play()
-            levelValueText.TextColor3 = PURPLE_BRIGHT
-        else
-            levelFillGradient.Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0, COLORS.fillStart),
-                ColorSequenceKeypoint.new(1, COLORS.fillEnd),
-            })
-            TweenService:Create(levelTrackStroke, tweenInfo, {Color = COLORS.trackBorder}):Play()
-            TweenService:Create(levelKnobStroke, tweenInfo, {Color = COLORS.knobBorder}):Play()
-            levelValueText.TextColor3 = COLORS.accentBright
-        end
-
+        levelFill.Size = UDim2.fromOffset(knobX, TRACK_HEIGHT)
+        levelKnob.Position = UDim2.fromOffset(knobX, TRACK_HEIGHT / 2)
         levelValueText.Text = REASONING_LEVELS[currentLevel].name
         for i, item in ipairs(levelLabels) do
-            item.TextColor3 = (i == currentLevel)
-                and (isSupreme and PURPLE_BRIGHT or COLORS.accentBright)
-                or COLORS.muted
-        end
-
-        if announce then
-            showToast("等级: " .. REASONING_LEVELS[currentLevel].name)
+            item.TextColor3 = (i == currentLevel) and COLORS.accentBright or COLORS.muted
         end
     end
 
@@ -971,42 +846,43 @@ local function buildInterface()
         local localX = x - absX
         local progress = math.clamp((localX - KNOB_RADIUS) / math.max(trackW - KNOB_SIZE, 1), 0, 1)
         local index = math.floor(progress * (#REASONING_LEVELS - 1) + 0.5) + 1
-        setLevel(index, false)
+        setLevel(index)
     end
 
-    local function beginLevelDrag(input)
+    levelKnob.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            levelDragging = true
+        end
+    end)
+    levelSlider.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             levelDragging = true
             setLevelFromX(input.Position.X)
         end
-    end
-
-    levelSlider.InputBegan:Connect(beginLevelDrag)
-    levelKnob.InputBegan:Connect(beginLevelDrag)
-
+    end)
     UserInputService.InputChanged:Connect(function(input)
         if levelDragging and (input.UserInputType == Enum.UserInputType.MouseMovement
             or input.UserInputType == Enum.UserInputType.Touch) then
             setLevelFromX(input.Position.X)
         end
     end)
-
     UserInputService.InputEnded:Connect(function(input)
-        if levelDragging and (input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch) then
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
             levelDragging = false
-            setLevel(currentLevel, true)
         end
     end)
 
+    -- 对话区
     local conversation = new("ScrollingFrame", {
         BackgroundTransparency = 1, BorderSizePixel = 0,
         Position = UDim2.fromOffset(16, 46 + 92),
         Size = UDim2.new(1, -32, 1, -140 - 92),
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
         ScrollBarThickness = 3, ScrollBarImageColor3 = COLORS.border,
-        Parent = main,
+        ZIndex = 5, Parent = main,
     })
     new("UIListLayout", {
         Padding = UDim.new(0, 10), SortOrder = Enum.SortOrder.LayoutOrder,
@@ -1014,325 +890,19 @@ local function buildInterface()
     })
     padding(conversation, 0, 8, 4, 16)
 
-    local function scrollToBottom()
-        task.defer(function()
-            conversation.CanvasPosition = Vector2.new(0, math.max(0, conversation.AbsoluteCanvasSize.Y - conversation.AbsoluteWindowSize.Y))
-        end)
-    end
-
-    local toast = label(gui, "", 11, COLORS.text, FONT_SEMI, {
-        Visible = false, AnchorPoint = Vector2.new(0.5, 1),
-        Position = UDim2.new(0.5, 0, 1, -16), Size = UDim2.fromOffset(360, 30),
-        BackgroundColor3 = COLORS.panelRaised, TextXAlignment = Enum.TextXAlignment.Center,
-        ZIndex = 100,
-    })
-    corner(toast, 8)
-    stroke(toast, COLORS.border, 0.2, 1)
-
-    local function showToast(message)
-        toast.Text = message
-        toast.Visible = true
-        toast.TextTransparency = 0
-        toast.BackgroundTransparency = 0
-        task.delay(2.5, function()
-            if toast.Text == message then
-                local fade = TweenService:Create(toast, TweenInfo.new(0.25), {TextTransparency = 1, BackgroundTransparency = 1})
-                fade:Play()
-                fade.Completed:Wait()
-                toast.Visible = false
-                toast.TextTransparency = 0
-                toast.BackgroundTransparency = 0
-            end
-        end)
-    end
-
-    local function createCodeBlock(parent, code)
-        local codeFrame = new("Frame", {
-            BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
-            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-            Parent = parent,
-        })
-        corner(codeFrame, 6)
-        stroke(codeFrame, COLORS.border, 0.25, 1)
-        padding(codeFrame, 8, 8, 24, 8)
-        registerThemeCallback(function()
-            codeFrame.BackgroundColor3 = COLORS.canvas
-        end)
-
-        new("TextLabel", {
-            BackgroundTransparency = 1, Text = code,
-            TextColor3 = COLORS.text, TextSize = 10,
-            Font = FONT_CODE, TextWrapped = true, TextTransparency = 0,
-            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-            Parent = codeFrame,
-        })
-
-        local copy = button(codeFrame, "复制", {
-            AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, -22),
-            Size = UDim2.fromOffset(46, 20), BackgroundColor3 = COLORS.panelRaised,
-            TextColor3 = COLORS.muted, TextSize = 9,
-        })
-        copy.MouseButton1Click:Connect(function()
-            if setclipboard then
-                setclipboard(code)
-                showToast("代码已复制")
-            end
-        end)
-        copy.Activated:Connect(function()
-            if setclipboard then
-                setclipboard(code)
-                showToast("代码已复制")
-            end
-        end)
-        return codeFrame
-    end
-
-    local function typewriter(label, text, speed)
-        label.Text = ""
-        local i = 0
-        local task = AnimRegistry:add(label, function(dt)
-            i = i + dt * (speed or 60)
-            local n = math.floor(i)
-            if n >= #text then
-                label.Text = text
-                AnimRegistry:remove(task)
-            else
-                label.Text = text:sub(1, n)
-            end
-        end)
-    end
-
-    local function addToolMessage(tool, args, result, ok)
-        state.messageCount += 1
-        local row = new("Frame", {
-            BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            LayoutOrder = state.messageCount, Parent = conversation,
-        })
-
-        local icon = new("Frame", {
-            BackgroundColor3 = ok and COLORS.green or COLORS.danger,
-            BorderSizePixel = 0, Position = UDim2.fromOffset(2, 1),
-            Size = UDim2.fromOffset(22, 22), Parent = row,
-        })
-        corner(icon, 11)
-        label(icon, ok and "✓" or "✕", 11, COLORS.canvas, FONT_BOLD, {
-            Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
-        })
-
-        local contentFrame = new("Frame", {
-            BackgroundTransparency = 1, Position = UDim2.fromOffset(34, 0),
-            Size = UDim2.new(1, -34, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-            Parent = row,
-        })
-
-        local toolHeader = label(contentFrame, "工具 · " .. tool, 10, ok and COLORS.green or COLORS.danger, FONT_BOLD, {
-            Size = UDim2.new(1, 0, 0, 16),
-        })
-
-        local bodyFrame = new("Frame", {
-            BackgroundColor3 = ok and COLORS.toolOkBubble or COLORS.toolErrBubble,
-            BorderSizePixel = 0,
-            Position = UDim2.fromOffset(0, 20),
-            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-            Parent = contentFrame,
-        })
-        corner(bodyFrame, 8)
-        local bodyStroke = stroke(bodyFrame, ok and COLORS.toolOkBorder or COLORS.toolErrBorder, 0.3, 1)
-        padding(bodyFrame, 10, 10, 8, 8)
-
-        registerThemeCallback(function()
-            bodyFrame.BackgroundColor3 = ok and COLORS.toolOkBubble or COLORS.toolErrBubble
-            toolHeader.TextColor3 = ok and COLORS.green or COLORS.danger
-        end)
-
-        local argsLabel = new("TextLabel", {
-            BackgroundTransparency = 1, Text = args:sub(1, 200),
-            TextColor3 = COLORS.text, TextSize = 9,
-            Font = FONT_CODE, TextWrapped = true, TextTransparency = 0,
-            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-            Parent = bodyFrame,
-        })
-
-        local resultLabel = new("TextLabel", {
-            BackgroundTransparency = 1, Text = result:sub(1, 200),
-            TextColor3 = ok and COLORS.green or COLORS.danger, TextSize = 9,
-            Font = FONT_CODE, TextWrapped = true, TextTransparency = 0,
-            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-            Parent = bodyFrame,
-        })
-
-        task.defer(function()
-            local argsH = 0
-            for _, child in ipairs(bodyFrame:GetChildren()) do
-                if child:IsA("TextLabel") and child ~= resultLabel then
-                    argsH = child.AbsoluteSize.Y
-                end
-            end
-            resultLabel.Position = UDim2.fromOffset(0, argsH + 6)
-        end)
-
-        scrollToBottom()
-        return row
-    end
-
-    local function addMessage(role, content, opts)
-        state.messageCount += 1
-        local isUser = role == "user"
-        local row = new("Frame", {
-            BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            LayoutOrder = state.messageCount, Parent = conversation,
-        })
-
-        local icon = new("Frame", {
-            BackgroundColor3 = isUser and COLORS.userBorder or COLORS.accent,
-            BorderSizePixel = 0, Position = UDim2.fromOffset(2, 1),
-            Size = UDim2.fromOffset(22, 22), Parent = row,
-        })
-        corner(icon, 11)
-        label(icon, isUser and string.sub(player.DisplayName, 1, 1):upper() or "✦", 10, COLORS.canvas, FONT_BOLD, {
-            Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
-        })
-
-        local contentFrame = new("Frame", {
-            BackgroundTransparency = 1, Position = UDim2.fromOffset(34, 0),
-            Size = UDim2.new(1, -34, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-            Parent = row,
-        })
-
-        local authorLabel = label(contentFrame, isUser and "你" or "Codex", 10, isUser and COLORS.userBorder or COLORS.accentBright, FONT_BOLD, {
-            Size = UDim2.new(1, -60, 0, 16),
-        })
-        if not isUser then
-            label(contentFrame, state.selectedModel.name, 9, COLORS.muted, FONT_REGULAR, {
-                AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 1),
-                Size = UDim2.fromOffset(160, 14), TextXAlignment = Enum.TextXAlignment.Right,
-            })
-        end
-
-        local bodyFrame = new("Frame", {
-            BackgroundColor3 = isUser and COLORS.userBubble or COLORS.aiBubble,
-            BorderSizePixel = 0, Position = UDim2.fromOffset(0, 20),
-            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-            Parent = contentFrame,
-        })
-        corner(bodyFrame, 8)
-        local bodyStroke = stroke(bodyFrame, isUser and COLORS.userBorder or COLORS.aiBorder, 0.3, 1)
-        padding(bodyFrame, 10, 10, 8, 8)
-
-        registerThemeCallback(function()
-            bodyFrame.BackgroundColor3 = isUser and COLORS.userBubble or COLORS.aiBubble
-            bodyStroke.Color = isUser and COLORS.userBorder or COLORS.aiBorder
-            authorLabel.TextColor3 = isUser and COLORS.userBorder or COLORS.accentBright
-        end)
-
-        local textLabel = label(bodyFrame, "", 12, COLORS.text, FONT_REGULAR, {
-            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-            TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top,
-        })
-        registerThemeCallback(function()
-            textLabel.TextColor3 = COLORS.text
-        end)
-
-        if opts and opts.code then
-            textLabel:Destroy()
-            if opts.text and opts.text ~= "" then
-                local pre = label(bodyFrame, "", 12, COLORS.text, FONT_REGULAR, {
-                    Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-                    TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top,
-                })
-                typewriter(pre, opts.text, 220)
-            end
-            local codeBlock = createCodeBlock(bodyFrame, opts.code)
-            codeBlock.Position = UDim2.fromOffset(0, opts.text and opts.text ~= "" and 4 or 0)
-
-            if CONFIG.AUTO_EXECUTE and not isUser then
-                task.defer(function()
-                    local ok, result = autoExecute(opts.code)
-                    addToolMessage("auto_exec", "自动执行", result, ok)
-                end)
-            end
-        else
-            typewriter(textLabel, content, isUser and 400 or 220)
-        end
-
-        if not isUser and opts and opts.retry then
-            local retry = button(bodyFrame, "↻  重试", {
-                Position = UDim2.new(0, 0, 1, 5),
-                Size = UDim2.fromOffset(60, 20),
-                BackgroundColor3 = COLORS.panelRaised,
-                TextColor3 = COLORS.muted, TextSize = 9,
-            })
-            retry.MouseButton1Click:Connect(function()
-                if opts.retryPrompt then sendMessage(opts.retryPrompt) end
-            end)
-            retry.Activated:Connect(function()
-                if opts.retryPrompt then sendMessage(opts.retryPrompt) end
-            end)
-        end
-
-        scrollToBottom()
-        return row
-    end
-
-    local promptBox
-
-    local function addWelcome()
-        local welcome = new("Frame", {
-            BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 140),
-            LayoutOrder = 0, Parent = conversation,
-        })
-        local welcomeTitle = label(welcome, "你想构建什么？", 20, COLORS.text, FONT_BOLD, {
-            Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 30),
-            TextXAlignment = Enum.TextXAlignment.Center,
-        })
-        local welcomeSub = label(welcome, "把想法交给 Codex", 11, COLORS.muted, FONT_REGULAR, {
-            Position = UDim2.fromOffset(0, 54), Size = UDim2.new(1, 0, 0, 18),
-            TextXAlignment = Enum.TextXAlignment.Center,
-        })
-        registerThemeCallback(function()
-            welcomeTitle.TextColor3 = COLORS.text
-            welcomeSub.TextColor3 = COLORS.muted
-        end)
-        local chips = {"改速度100", "生成一个UI", "提取脚本", "检查代码"}
-        for i, chipText in ipairs(chips) do
-            local chip = button(welcome, chipText, {
-                Position = UDim2.new(0.5, -172 + (i-1) * 88, 0, 92),
-                Size = UDim2.fromOffset(80, 26),
-                BackgroundColor3 = COLORS.panel,
-                TextColor3 = COLORS.muted, TextSize = 9,
-            })
-            chip.MouseButton1Click:Connect(function()
-                if promptBox then
-                    promptBox.Text = chipText
-                    promptBox:CaptureFocus()
-                end
-            end)
-            chip.Activated:Connect(function()
-                if promptBox then
-                    promptBox.Text = chipText
-                    promptBox:CaptureFocus()
-                end
-            end)
-        end
-    end
-
+    -- 输入区
     local composer = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -14),
         Size = UDim2.new(1, -32, 0, 76),
         BackgroundColor3 = COLORS.panel,
         BackgroundTransparency = COLORS.panelTransparency,
         BorderSizePixel = 0,
-        Parent = main,
+        ZIndex = 5, Parent = main,
     })
     corner(composer, 10)
-    local composerStroke = stroke(composer, COLORS.border, 0.1, 1)
+    stroke(composer, COLORS.border, 0.1, 1)
 
-    promptBox = new("TextBox", {
+    local promptBox = new("TextBox", {
         PlaceholderText = "让 Codex 构建、调试、解释...",
         PlaceholderColor3 = COLORS.muted, Text = "",
         TextColor3 = COLORS.text, TextSize = 12, Font = FONT_REGULAR,
@@ -1340,111 +910,40 @@ local function buildInterface()
         TextWrapped = true, MultiLine = true, ClearTextOnFocus = false,
         BackgroundTransparency = 1, TextTransparency = 0,
         Position = UDim2.fromOffset(12, 8), Size = UDim2.new(1, -24, 1, -38),
-        Parent = composer,
+        ZIndex = 6, Parent = composer,
     })
-    registerThemeCallback(function()
-        promptBox.TextColor3 = COLORS.text
-        promptBox.PlaceholderColor3 = COLORS.muted
-    end)
 
-    local thinkingDots = new("Frame", {
-        Visible = false, Position = UDim2.fromOffset(12, 52),
-        Size = UDim2.fromOffset(36, 14), BackgroundTransparency = 1,
-        Parent = composer,
+    -- 思考动画
+    local thinkingHolder = new("Frame", {
+        Visible = false, Position = UDim2.fromOffset(14, 52),
+        Size = UDim2.fromOffset(40, 14), BackgroundTransparency = 1,
+        ZIndex = 6, Parent = composer,
     })
-    local dots = {}
+    local tdots = {}
     for i = 1, 3 do
         local d = new("Frame", {
             BackgroundColor3 = COLORS.accent, BorderSizePixel = 0,
             Size = UDim2.fromOffset(5, 5), Position = UDim2.fromOffset((i-1) * 10, 4),
-            Parent = thinkingDots,
+            ZIndex = 6, Parent = thinkingHolder,
         })
         corner(d, 3)
-        table.insert(dots, d)
+        table.insert(tdots, d)
     end
-    AnimRegistry:add(thinkingDots, function(dt, t)
-        if not thinkingDots.Visible then return end
-        for i, d in ipairs(dots) do
-            local phase = t * 4 - (i - 1) * 0.5
+    AnimRegistry:add(thinkingHolder, function(dt)
+        if not thinkingHolder.Visible then return end
+        local t = tick() * 4
+        for i, d in ipairs(tdots) do
+            local phase = t - (i - 1) * 0.5
             local y = math.abs(math.sin(phase)) * -4
             d.Position = UDim2.fromOffset((i-1) * 10, 4 + y)
             d.BackgroundTransparency = 1 - (0.5 + 0.5 * math.abs(math.sin(phase)))
         end
     end)
 
-    local hint = label(composer, "Enter 发送", 9, COLORS.muted, FONT_REGULAR, {
-        Position = UDim2.fromOffset(54, 52), Size = UDim2.fromOffset(200, 14),
-    })
     local tokenLabel = label(composer, "tokens: 0 / ∞", 9, COLORS.muted, FONT_REGULAR, {
-        AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -92, 0, 52),
-        Size = UDim2.fromOffset(120, 14), TextXAlignment = Enum.TextXAlignment.Right,
+        AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -52, 0, 52),
+        Size = UDim2.fromOffset(140, 14), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 6,
     })
-    registerThemeCallback(function()
-        hint.TextColor3 = COLORS.muted
-    end)
-
-    local stopButton = button(composer, "■", {
-        Visible = false, AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -48, 0, 48), Size = UDim2.fromOffset(26, 22),
-        BackgroundColor3 = Color3.fromRGB(70, 48, 50), TextColor3 = COLORS.danger,
-        TextSize = 11,
-    })
-    local sendButton = button(composer, "↑", {
-        AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 48),
-        Size = UDim2.fromOffset(30, 22),
-        BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
-        TextSize = 14, Font = FONT_BOLD,
-    })
-
-    local function updateModel(model)
-        state.selectedModel = model
-        CONFIG.MODEL = model.id
-        modelName.Text = model.name
-        modelBadge.Text = model.badge
-        modelDot.BackgroundColor3 = model.color
-        modelMenu.Visible = false
-        state.modelMenuOpen = false
-        showToast("模型: " .. model.name)
-    end
-
-    for _, model in ipairs(MODELS) do
-        local modelItem = button(modelMenu, "", {
-            Size = UDim2.new(1, 0, 0, 44),
-            BackgroundColor3 = COLORS.panel,
-            TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 21,
-        })
-        local dot = new("Frame", {
-            BackgroundColor3 = model.color, BorderSizePixel = 0,
-            Position = UDim2.fromOffset(8, 15), Size = UDim2.fromOffset(7, 7),
-            ZIndex = 22, Parent = modelItem,
-        })
-        corner(dot, 4)
-        local mname = label(modelItem, model.name, 11, COLORS.text, FONT_SEMI, {
-            Position = UDim2.fromOffset(24, 5), Size = UDim2.fromOffset(150, 16), ZIndex = 22,
-        })
-        local mdesc = label(modelItem, model.description, 9, COLORS.muted, FONT_REGULAR, {
-            Position = UDim2.fromOffset(24, 22), Size = UDim2.fromOffset(190, 15), ZIndex = 22,
-        })
-        label(modelItem, model.context, 9, model.color, FONT_SEMI, {
-            AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
-            Size = UDim2.fromOffset(60, 14), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 22,
-        })
-        registerThemeCallback(function()
-            mname.TextColor3 = COLORS.text
-            mdesc.TextColor3 = COLORS.muted
-        end)
-        modelItem.MouseButton1Click:Connect(function() updateModel(model) end)
-        modelItem.Activated:Connect(function() updateModel(model) end)
-    end
-
-    modelButton.MouseButton1Click:Connect(function()
-        state.modelMenuOpen = not state.modelMenuOpen
-        modelMenu.Visible = state.modelMenuOpen
-    end)
-    modelButton.Activated:Connect(function()
-        state.modelMenuOpen = not state.modelMenuOpen
-        modelMenu.Visible = state.modelMenuOpen
-    end)
 
     local function updateTokenDisplay()
         local limitStr = CONFIG.TOKEN_LIMIT_ENABLED and tostring(CONFIG.TOKEN_LIMIT) or "∞"
@@ -1458,663 +957,1515 @@ local function buildInterface()
         end
     end
 
-    local function trimConversation()
-        if not CONFIG.TOKEN_LIMIT_ENABLED then return end
-        while #state.conversationHistory > 2 do
-            local est = estimateMessagesTokens(state.conversationHistory) + estimateTokens(buildSystemPrompt())
-            if est <= CONFIG.TOKEN_LIMIT then break end
-            table.remove(state.conversationHistory, 1)
-            table.remove(state.conversationHistory, 1)
-        end
+    -- Toast
+    local toastHolder = new("Frame", {
+        Name = "CodexToast", Visible = false,
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, -60),
+        Size = UDim2.fromOffset(0, 40),
+        AutomaticSize = Enum.AutomaticSize.X,
+        BackgroundColor3 = COLORS.panel,
+        BackgroundTransparency = 0.05,
+        BorderSizePixel = 0, ZIndex = 900, Parent = gui,
+    })
+    corner(toastHolder, 10)
+    stroke(toastHolder, COLORS.border, 0.15, 1)
+    padding(toastHolder, 14, 18, 0, 0)
+    local toastBar = new("Frame", {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 0, 0.5, 0),
+        Size = UDim2.fromOffset(3, 22),
+        BackgroundColor3 = COLORS.accent,
+        BorderSizePixel = 0, ZIndex = 901, Parent = toastHolder,
+    })
+    corner(toastBar, 2)
+    local toastIcon = label(toastHolder, "•", 16, COLORS.accent, FONT_BOLD, {
+        Position = UDim2.fromOffset(12, 0), Size = UDim2.fromOffset(20, 40), ZIndex = 901,
+    })
+    local toastText = label(toastHolder, "", 12, COLORS.text, FONT_SEMI, {
+        Position = UDim2.fromOffset(34, 0),
+        Size = UDim2.new(0, 0, 1, 0),
+        AutomaticSize = Enum.AutomaticSize.X, ZIndex = 901,
+    })
+
+    local toastConn
+    local function showToast(msg, color, icon)
+        color = color or COLORS.accent
+        icon = icon or "•"
+        if toastConn then toastConn:Disconnect() end
+        toastHolder.Visible = true
+        toastHolder.Position = UDim2.new(0.5, 0, 0, -60)
+        toastHolder.BackgroundColor3 = COLORS.panel
+        toastHolder.BackgroundTransparency = 0.05
+        toastBar.BackgroundColor3 = color
+        toastIcon.Text = icon
+        toastIcon.TextColor3 = color
+        toastText.Text = msg
+        toastText.TextColor3 = COLORS.text
+        TweenService:Create(toastHolder, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Position = UDim2.new(0.5, 0, 0, 20),
+        }):Play()
+        toastConn = task.delay(2.6, function()
+            local t = TweenService:Create(toastHolder, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                Position = UDim2.new(0.5, 0, 0, -60), BackgroundTransparency = 1,
+            })
+            local t2 = TweenService:Create(toastText, TweenInfo.new(0.2), {TextTransparency = 1})
+            t:Play(); t2:Play()
+            t.Completed:Wait()
+            toastHolder.Visible = false
+            toastHolder.BackgroundTransparency = 0.05
+            toastText.TextTransparency = 0
+        end)
     end
 
-    local sendMessage
+    -- 打字机
+    local function typewriter(lbl, text, speed)
+        lbl.Text = ""
+        local i = 0
+        local task = AnimRegistry:add(lbl, function(dt)
+            i = i + dt * (speed or 60)
+            local n = math.floor(i)
+            if n >= #text then
+                lbl.Text = text
+                AnimRegistry:remove(task)
+            else
+                lbl.Text = text:sub(1, n)
+            end
+        end)
+    end
+
+    local function scrollToBottom()
+        task.defer(function()
+            conversation.CanvasPosition = Vector2.new(0, math.max(0, conversation.AbsoluteCanvasSize.Y - conversation.AbsoluteWindowSize.Y))
+        end)
+    end
+
+    local function addMessage(role, content, opts)
+        state.messageCount += 1
+        local isUser = role == "user"
+        local row = new("Frame", {
+            BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            LayoutOrder = state.messageCount, ZIndex = 5, Parent = conversation,
+        })
+
+        local icon = new("Frame", {
+            BackgroundColor3 = isUser and COLORS.userBorder or COLORS.accent,
+            BorderSizePixel = 0, Position = UDim2.fromOffset(2, 1),
+            Size = UDim2.fromOffset(22, 22), ZIndex = 6, Parent = row,
+        })
+        corner(icon, 11)
+        label(icon, isUser and string.sub(player.DisplayName, 1, 1):upper() or "✦", 10, COLORS.canvas, FONT_BOLD, {
+            Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 7,
+        })
+
+        local cf = new("Frame", {
+            BackgroundTransparency = 1, Position = UDim2.fromOffset(34, 0),
+            Size = UDim2.new(1, -34, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            ZIndex = 5, Parent = row,
+        })
+
+        local authorLabel = label(cf, isUser and "你" or "Codex", 10,
+            isUser and COLORS.userBorder or COLORS.accentBright, FONT_BOLD, {
+                Size = UDim2.new(1, -60, 0, 16), ZIndex = 6,
+            })
+        if not isUser then
+            label(cf, state.selectedModel.name, 9, COLORS.muted, FONT_REGULAR, {
+                AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 1),
+                Size = UDim2.fromOffset(160, 14), TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 6,
+            })
+        end
+
+        local body = new("Frame", {
+            BackgroundColor3 = isUser and COLORS.userBubble or COLORS.aiBubble,
+            BorderSizePixel = 0, Position = UDim2.fromOffset(0, 20),
+            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            ZIndex = 5, Parent = cf,
+        })
+        corner(body, 8)
+        local bodyStroke = stroke(body, isUser and COLORS.userBorder or COLORS.aiBorder, 0.3, 1)
+        padding(body, 10, 10, 8, 8)
+
+        registerThemeCallback(function()
+            body.BackgroundColor3 = isUser and COLORS.userBubble or COLORS.aiBubble
+            bodyStroke.Color = isUser and COLORS.userBorder or COLORS.aiBorder
+            authorLabel.TextColor3 = isUser and COLORS.userBorder or COLORS.accentBright
+        end)
+
+        local textLabel = label(body, "", 12, COLORS.text, FONT_REGULAR, {
+            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 6,
+        })
+        registerThemeCallback(function()
+            textLabel.TextColor3 = COLORS.text
+        end)
+
+        if opts and opts.code then
+            textLabel:Destroy()
+            local codeFrame = new("Frame", {
+                BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
+                Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+                ZIndex = 6, Parent = body,
+            })
+            corner(codeFrame, 6)
+            stroke(codeFrame, COLORS.border, 0.25, 1)
+            padding(codeFrame, 8, 8, 30, 8)
+            registerThemeCallback(function()
+                codeFrame.BackgroundColor3 = COLORS.canvas
+            end)
+            new("TextLabel", {
+                BackgroundTransparency = 1, Text = opts.code,
+                TextColor3 = COLORS.text, TextSize = 10,
+                Font = FONT_CODE, TextWrapped = true,
+                TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+                Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+                ZIndex = 7, Parent = codeFrame,
+            })
+            local copyBtn = button(codeFrame, "📋 复制", {
+                AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, -26),
+                Size = UDim2.fromOffset(60, 22),
+                BackgroundColor3 = COLORS.panelRaised,
+                TextColor3 = COLORS.muted, TextSize = 10, ZIndex = 7,
+            })
+            bindClick(copyBtn, function()
+                if setclipboard then
+                    setclipboard(opts.code)
+                    showToast("代码已复制", COLORS.green, "✓")
+                end
+            end)
+            state.lastCode = opts.code
+        else
+            typewriter(textLabel, content, isUser and 400 or 220)
+        end
+
+        scrollToBottom()
+        return row
+    end
+
+    local function addToolCard(tool, argsStr, result, ok)
+        state.messageCount += 1
+        local row = new("Frame", {
+            BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            LayoutOrder = state.messageCount, ZIndex = 5, Parent = conversation,
+        })
+        local icon = new("Frame", {
+            BackgroundColor3 = ok and COLORS.green or COLORS.danger,
+            BorderSizePixel = 0, Position = UDim2.fromOffset(2, 1),
+            Size = UDim2.fromOffset(22, 22), ZIndex = 6, Parent = row,
+        })
+        corner(icon, 11)
+        label(icon, ok and "✓" or "✕", 11, COLORS.canvas, FONT_BOLD, {
+            Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 7,
+        })
+        local cf = new("Frame", {
+            BackgroundTransparency = 1, Position = UDim2.fromOffset(34, 0),
+            Size = UDim2.new(1, -34, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            ZIndex = 5, Parent = row,
+        })
+        local hd = label(cf, "工具 · " .. tool, 10, ok and COLORS.green or COLORS.danger, FONT_BOLD, {
+            Size = UDim2.new(1, 0, 0, 16), ZIndex = 6,
+        })
+        local body = new("Frame", {
+            BackgroundColor3 = ok and COLORS.toolOkBubble or COLORS.toolErrBubble,
+            BorderSizePixel = 0, Position = UDim2.fromOffset(0, 20),
+            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            ZIndex = 5, Parent = cf,
+        })
+        corner(body, 8)
+        stroke(body, ok and COLORS.toolOkBorder or COLORS.toolErrBorder, 0.3, 1)
+        padding(body, 10, 10, 8, 8)
+        registerThemeCallback(function()
+            body.BackgroundColor3 = ok and COLORS.toolOkBubble or COLORS.toolErrBubble
+            hd.TextColor3 = ok and COLORS.green or COLORS.danger
+        end)
+        local argsLbl = new("TextLabel", {
+            BackgroundTransparency = 1, Text = "参数: " .. argsStr:sub(1, 200),
+            TextColor3 = COLORS.text, TextSize = 9, Font = FONT_CODE, TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            ZIndex = 6, Parent = body,
+        })
+        local resLbl = new("TextLabel", {
+            BackgroundTransparency = 1, Text = "结果: " .. result:sub(1, 200),
+            TextColor3 = ok and COLORS.green or COLORS.danger, TextSize = 9,
+            Font = FONT_CODE, TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+            Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            ZIndex = 6, Parent = body,
+        })
+        task.defer(function()
+            resLbl.Position = UDim2.fromOffset(0, argsLbl.AbsoluteSize.Y + 6)
+        end)
+        scrollToBottom()
+    end
+
+    -- 发送/运行逻辑
+    local stopBtn = button(composer, "■", {
+        Visible = false, AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -46, 0, 48),
+        Size = UDim2.fromOffset(30, 22),
+        BackgroundColor3 = Color3.fromRGB(70, 48, 50),
+        TextColor3 = COLORS.danger, TextSize = 11, ZIndex = 20,
+    })
+    local sendButton = button(composer, "↑", {
+        AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 48),
+        Size = UDim2.fromOffset(30, 22),
+        BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
+        TextSize = 14, Font = FONT_BOLD, ZIndex = 20,
+    })
 
     local function runAgent(userInput)
-        if state.running then
-            showToast("上一个任务还在跑")
-            return
-        end
+        if state.running then return end
         state.running = true
         state.requestToken += 1
         local token = state.requestToken
 
         if CONFIG.API_KEY == "" then
-            addMessage("assistant", "请先在设置里填入 DeepSeek API Key。")
+            addMessage("assistant", "请先在设置里填入 API Key。")
             state.running = false
+            stopBtn.Visible = false
+            sendButton.Visible = true
+            thinkingHolder.Visible = false
             return
         end
 
         table.insert(state.conversationHistory, { role = "user", content = userInput })
-        trimConversation()
-
         local messages = { { role = "system", content = buildSystemPrompt() } }
         for _, m in ipairs(state.conversationHistory) do
             table.insert(messages, m)
         end
 
-        stopButton.Visible = true
-        sendButton.Visible = false
-        thinkingDots.Visible = true
-        hint.Visible = false
-
         local loopCount = 0
         while loopCount < CONFIG.MAX_LOOPS do
             loopCount += 1
             if not state.running or token ~= state.requestToken then break end
-
-            local reply, err = callDeepSeek(messages)
+            local reply, err = callAPI(messages)
             if err then
-                thinkingDots.Visible = false
-                hint.Visible = true
-                stopButton.Visible = false
-                sendButton.Visible = true
-                addMessage("assistant", "错误: " .. err, {retry = true, retryPrompt = userInput})
-                state.running = false
-                return
+                addMessage("assistant", "错误: " .. err)
+                break
             end
-
-            state.totalTokens = estimateMessagesTokens(messages) + estimateTokens(reply)
+            state.totalTokens = state.totalTokens + estimateTokens(reply)
             updateTokenDisplay()
-
-            if CONFIG.TOKEN_LIMIT_ENABLED and state.totalTokens > CONFIG.TOKEN_LIMIT then
-                thinkingDots.Visible = false
-                hint.Visible = true
-                stopButton.Visible = false
-                sendButton.Visible = true
-                addMessage("assistant", "已超出 token 上限，停止。", {retry = true, retryPrompt = userInput})
-                state.running = false
-                return
-            end
-
             table.insert(messages, { role = "assistant", content = reply })
             table.insert(state.conversationHistory, { role = "assistant", content = reply })
-
-            local tool, args = parseToolCall(reply)
-
+            local tool, args = parseTool(reply)
             if tool and TOOLS[tool] then
-                thinkingDots.Visible = false
-                local argsStr = HttpService:JSONEncode(args)
                 local result
-                local ok
-
                 if tool == "run_code" and CONFIG.AUTO_EXECUTE then
                     local success, res = autoExecute(args.code or "")
                     result = res
-                    ok = success
-                    state.lastCode = args.code or ""
                 else
                     result = TOOLS[tool](args)
-                    ok = not result:find("失败") and not result:find("错误")
-                    if tool == "run_code" then
-                        state.lastCode = args.code or ""
-                    end
                 end
-
-                addToolMessage(tool, argsStr, result, ok)
-                thinkingDots.Visible = true
-
+                addToolCard(tool, HttpService:JSONEncode(args), result, not result:find("失败") and not result:find("错误"))
                 local toolMsg = tool .. " 返回: " .. result
                 table.insert(messages, { role = "user", content = toolMsg })
                 table.insert(state.conversationHistory, { role = "user", content = toolMsg })
             else
-                thinkingDots.Visible = false
-                hint.Visible = true
-                stopButton.Visible = false
-                sendButton.Visible = true
-
                 local extracted = extractCode(reply)
                 if extracted then
-                    state.lastCode = extracted
-                    addMessage("assistant", "", { code = extracted, retry = true, retryPrompt = userInput })
+                    addMessage("assistant", "", { code = extracted })
                 else
-                    addMessage("assistant", reply, { retry = true, retryPrompt = userInput })
+                    addMessage("assistant", reply)
                 end
-                state.running = false
-                return
+                break
             end
         end
 
-        thinkingDots.Visible = false
-        hint.Visible = true
-        stopButton.Visible = false
-        sendButton.Visible = true
         state.running = false
+        stopBtn.Visible = false
+        sendButton.Visible = true
+        thinkingHolder.Visible = false
     end
 
-    sendMessage = function(override)
+    local function sendMessage(override)
         if state.running then return end
         local prompt = override or promptBox.Text
         prompt = prompt:gsub("^%s+", ""):gsub("%s+$", "")
-        if prompt == "" then showToast("先输入一个任务") return end
+        if prompt == "" then return end
         promptBox.Text = ""
         if state.messageCount == 0 then
             state.taskTitle = prompt:sub(1, 30)
             taskTitle.Text = state.taskTitle
         end
         addMessage("user", prompt)
+        thinkingHolder.Visible = true
+        stopBtn.Visible = true
+        sendButton.Visible = false
         task.spawn(runAgent, prompt)
     end
 
-    stopButton.MouseButton1Click:Connect(function()
+    bindClick(sendButton, function() sendMessage() end)
+    bindClick(stopBtn, function()
         if not state.running then return end
         state.running = false
         state.requestToken += 1
-        stopButton.Visible = false
+        stopBtn.Visible = false
         sendButton.Visible = true
-        thinkingDots.Visible = false
-        hint.Visible = true
-        showToast("已停止")
+        thinkingHolder.Visible = false
+        showToast("已停止", COLORS.danger, "■")
     end)
-    stopButton.Activated:Connect(function()
-        if not state.running then return end
-        state.running = false
-        state.requestToken += 1
-        stopButton.Visible = false
-        sendButton.Visible = true
-        thinkingDots.Visible = false
-        hint.Visible = true
-        showToast("已停止")
+    promptBox.FocusLost:Connect(function(enter)
+        if enter then sendMessage() end
     end)
-    sendButton.MouseButton1Click:Connect(function() sendMessage(nil) end)
-    sendButton.Activated:Connect(function() sendMessage(nil) end)
-    promptBox.FocusLost:Connect(function(enterPressed)
-        if enterPressed and not UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and not UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
-            sendMessage(nil)
+
+    -- 最小化圆球
+    local ball = new("TextButton", {
+        Size = UDim2.fromOffset(52, 52), Position = UDim2.new(0, 20, 0.5, -26),
+        BackgroundColor3 = COLORS.accent, Text = "AI", TextColor3 = COLORS.canvas,
+        TextSize = 14, Font = FONT_BOLD, BorderSizePixel = 0,
+        Visible = false, Active = true, ZIndex = 1000, Parent = gui,
+    })
+    corner(ball, 26)
+    local ballGrad = gradient(ball, COLORS.accent, PURPLE, 45)
+    local ballStroke = stroke(ball, COLORS.accentBright, 0.3, 2)
+
+    local pulseRing = new("Frame", {
+        Size = UDim2.fromOffset(52, 52), Position = UDim2.fromOffset(0, 0),
+        BackgroundTransparency = 1, Visible = false,
+        ZIndex = 999, Parent = gui,
+    })
+    corner(pulseRing, 26)
+    local pulseStroke = stroke(pulseRing, COLORS.accentBright, 0.3, 2)
+    AnimRegistry:add(pulseRing, function(dt)
+        if not pulseRing.Visible then return end
+        local t = tick() * 1.5 % 1
+        pulseRing.Size = UDim2.fromOffset(52 + t * 30, 52 + t * 30)
+        pulseRing.Position = UDim2.new(
+            ball.Position.X.Scale, ball.Position.X.Offset - t * 15,
+            ball.Position.Y.Scale, ball.Position.Y.Offset - t * 15
+        )
+        pulseStroke.Transparency = 0.3 + t * 0.6
+    end)
+
+    local ballDrag, ballStart, ballOrigin
+    ball.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            ballDrag = true
+            ballStart = input.Position
+            ballOrigin = ball.Position
+        end
+    end)
+    ball.InputChanged:Connect(function(input)
+        if ballDrag and (input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - ballStart
+            ball.Position = UDim2.new(
+                ballOrigin.X.Scale, ballOrigin.X.Offset + delta.X,
+                ballOrigin.Y.Scale, ballOrigin.Y.Offset + delta.Y
+            )
+            pulseRing.Position = ball.Position
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            ballDrag = false
         end
     end)
 
-    local overlay = new("Frame", {
-        Visible = false, BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-        BackgroundTransparency = 0.45, BorderSizePixel = 0,
-        Size = UDim2.fromScale(1, 1), ZIndex = 40, Parent = gui,
-    })
+    bindClick(minimizeBtn, function()
+        shell.Visible = false
+        ball.Visible = true
+        pulseRing.Visible = true
+    end)
+    bindClick(ball, function()
+        shell.Visible = true
+        ball.Visible = false
+        pulseRing.Visible = false
+    end)
 
     -- 设置面板
     local settingsPanel = new("Frame", {
         Visible = false, AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(440, 398),
+        Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(400, 320),
         BackgroundColor3 = COLORS.panel, BorderSizePixel = 0,
-        ZIndex = 50, Parent = gui,
+        ZIndex = 600, Parent = shell,
     })
     corner(settingsPanel, 12)
-    local settingsStroke = stroke(settingsPanel, COLORS.border, 0.1, 1)
-    local settingsGradient = gradient(settingsPanel, COLORS.panelRaised, COLORS.panel, 90)
+    stroke(settingsPanel, COLORS.border, 0.1, 1)
 
-    new("Frame", {
-        BackgroundColor3 = COLORS.accent, BackgroundTransparency = 0.15,
-        BorderSizePixel = 0, Position = UDim2.fromOffset(16, 42),
-        Size = UDim2.new(1, -32, 0, 1), ZIndex = 51, Parent = settingsPanel,
+    label(settingsPanel, "设置", 15, COLORS.text, FONT_BOLD, {
+        Position = UDim2.fromOffset(16, 14), Size = UDim2.fromOffset(200, 22), ZIndex = 601,
     })
-
-    local settingsTitle = label(settingsPanel, "设置", 15, COLORS.text, FONT_BOLD, {
-        Position = UDim2.fromOffset(16, 14), Size = UDim2.fromOffset(200, 22), ZIndex = 51,
-    })
-    local settingsClose = button(settingsPanel, "×", {
+    local sClose = button(settingsPanel, "×", {
         AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 12),
-        Size = UDim2.fromOffset(26, 26), BackgroundColor3 = COLORS.panelRaised,
-        TextColor3 = COLORS.muted, TextSize = 16, ZIndex = 51,
+        Size = UDim2.fromOffset(26, 26),
+        BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.muted,
+        TextSize = 16, ZIndex = 601,
     })
-
-    label(settingsPanel, "UI 主题", 9, COLORS.muted, FONT_BOLD, {
-        Position = UDim2.fromOffset(16, 50), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
-    })
-    local themeButtons = {}
-    local themeOrder = {"translucent", "white", "dark"}
-    local themeLabels = {"半透明", "白色", "黑灰"}
-    for i, key in ipairs(themeOrder) do
-        local b = button(settingsPanel, themeLabels[i], {
-            Position = UDim2.fromOffset(16 + (i-1) * 100, 66),
-            Size = UDim2.fromOffset(92, 30),
-            BackgroundColor3 = (CONFIG.THEME == key) and COLORS.accent or COLORS.panelRaised,
-            TextColor3 = (CONFIG.THEME == key) and COLORS.canvas or COLORS.text,
-            TextSize = 11, Font = FONT_BOLD, ZIndex = 51,
-        })
-        b.MouseButton1Click:Connect(function()
-            if CONFIG.THEME == key then return end
-            applyTheme(key)
-            for j, other in ipairs(themeButtons) do
-                other.BackgroundColor3 = (themeOrder[j] == key) and COLORS.accent or COLORS.panelRaised
-                other.TextColor3 = (themeOrder[j] == key) and COLORS.canvas or COLORS.text
-            end
-            for _, cb in ipairs(themeCallbacks) do
-                pcall(cb)
-            end
-            showToast("主题: " .. themeLabels[i])
-        end)
-        b.Activated:Connect(function()
-            if CONFIG.THEME == key then return end
-            applyTheme(key)
-            for j, other in ipairs(themeButtons) do
-                other.BackgroundColor3 = (themeOrder[j] == key) and COLORS.accent or COLORS.panelRaised
-                other.TextColor3 = (themeOrder[j] == key) and COLORS.canvas or COLORS.text
-            end
-            for _, cb in ipairs(themeCallbacks) do
-                pcall(cb)
-            end
-            showToast("主题: " .. themeLabels[i])
-        end)
-        table.insert(themeButtons, b)
-    end
+    bindClick(sClose, function() settingsPanel.Visible = false end)
 
     label(settingsPanel, "API 地址", 9, COLORS.muted, FONT_BOLD, {
-        Position = UDim2.fromOffset(16, 108), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
+        Position = UDim2.fromOffset(16, 50), Size = UDim2.fromOffset(200, 14), ZIndex = 601,
     })
     local urlInput = new("TextBox", {
-        Position = UDim2.fromOffset(16, 124), Size = UDim2.new(1, -32, 0, 32),
+        Position = UDim2.fromOffset(16, 66), Size = UDim2.new(1, -32, 0, 34),
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         PlaceholderText = "https://api.deepseek.com/chat/completions",
         PlaceholderColor3 = COLORS.muted,
         Text = CONFIG.API_URL, TextColor3 = COLORS.text, TextSize = 10,
-        Font = FONT_CODE, ClearTextOnFocus = false, TextTransparency = 0, ZIndex = 51,
-        Parent = settingsPanel,
+        Font = FONT_CODE, ClearTextOnFocus = false, ZIndex = 601, Parent = settingsPanel,
     })
     corner(urlInput, 6)
     padding(urlInput, 10, 10, 0, 0)
     stroke(urlInput, COLORS.border, 0.4, 1)
     urlInput.FocusLost:Connect(function()
-        local t = urlInput.Text:gsub("%s", "")
-        if t ~= "" then
-            CONFIG.API_URL = t
-            _G.CodexConfig.API_URL = t
-        else
-            urlInput.Text = CONFIG.API_URL
-        end
-    end)
-    registerThemeCallback(function()
-        urlInput.BackgroundColor3 = COLORS.canvas
-        urlInput.TextColor3 = COLORS.text
+        if urlInput.Text ~= "" then CONFIG.API_URL = urlInput.Text end
     end)
 
     label(settingsPanel, "API KEY", 9, COLORS.muted, FONT_BOLD, {
-        Position = UDim2.fromOffset(16, 166), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
+        Position = UDim2.fromOffset(16, 110), Size = UDim2.fromOffset(200, 14), ZIndex = 601,
     })
     local keyInput = new("TextBox", {
-        Position = UDim2.fromOffset(16, 182), Size = UDim2.new(1, -32, 0, 32),
+        Position = UDim2.fromOffset(16, 126), Size = UDim2.new(1, -32, 0, 34),
         BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
         PlaceholderText = "sk-...", PlaceholderColor3 = COLORS.muted,
         Text = CONFIG.API_KEY, TextColor3 = COLORS.text, TextSize = 10,
-        Font = FONT_CODE, ClearTextOnFocus = false, TextTransparency = 0, ZIndex = 51,
-        Parent = settingsPanel,
+        Font = FONT_CODE, ClearTextOnFocus = false, ZIndex = 601, Parent = settingsPanel,
     })
     corner(keyInput, 6)
     padding(keyInput, 10, 10, 0, 0)
     stroke(keyInput, COLORS.border, 0.4, 1)
     keyInput.FocusLost:Connect(function()
         CONFIG.API_KEY = keyInput.Text
-        _G.CodexConfig.API_KEY = keyInput.Text
-    end)
-    registerThemeCallback(function()
-        keyInput.BackgroundColor3 = COLORS.canvas
-        keyInput.TextColor3 = COLORS.text
     end)
 
-    label(settingsPanel, "TOKEN 限制", 9, COLORS.muted, FONT_BOLD, {
-        Position = UDim2.fromOffset(16, 224), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
-    })
-    local tokenToggle = button(settingsPanel, "", {
-        Position = UDim2.fromOffset(16, 240), Size = UDim2.fromOffset(38, 20),
-        BackgroundColor3 = COLORS.border, ZIndex = 51,
-    })
-    corner(tokenToggle, 10)
-    local tokenKnob = new("Frame", {
-        BackgroundColor3 = COLORS.text, BorderSizePixel = 0,
-        Position = UDim2.fromOffset(3, 3), Size = UDim2.fromOffset(14, 14),
-        ZIndex = 52, Parent = tokenToggle,
-    })
-    corner(tokenKnob, 7)
-    label(settingsPanel, "启用 Token 限制", 11, COLORS.text, FONT_SEMI, {
-        Position = UDim2.fromOffset(62, 238), Size = UDim2.fromOffset(200, 20), ZIndex = 51,
-    })
-    tokenToggle.MouseButton1Click:Connect(function()
-        CONFIG.TOKEN_LIMIT_ENABLED = not CONFIG.TOKEN_LIMIT_ENABLED
-        if CONFIG.TOKEN_LIMIT_ENABLED then
-            tokenToggle.BackgroundColor3 = COLORS.accent
-            tokenKnob.Position = UDim2.fromOffset(21, 3)
-        else
-            tokenToggle.BackgroundColor3 = COLORS.border
-            tokenKnob.Position = UDim2.fromOffset(3, 3)
-        end
-        updateTokenDisplay()
-    end)
-    tokenToggle.Activated:Connect(function()
-        CONFIG.TOKEN_LIMIT_ENABLED = not CONFIG.TOKEN_LIMIT_ENABLED
-        if CONFIG.TOKEN_LIMIT_ENABLED then
-            tokenToggle.BackgroundColor3 = COLORS.accent
-            tokenKnob.Position = UDim2.fromOffset(21, 3)
-        else
-            tokenToggle.BackgroundColor3 = COLORS.border
-            tokenKnob.Position = UDim2.fromOffset(3, 3)
-        end
-        updateTokenDisplay()
-    end)
-
-    label(settingsPanel, "上下文上限", 9, COLORS.muted, FONT_BOLD, {
-        Position = UDim2.fromOffset(200, 224), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
-    })
-    local limitInput = new("TextBox", {
-        Position = UDim2.fromOffset(200, 240), Size = UDim2.new(0, 160, 0, 28),
-        BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
-        Text = tostring(CONFIG.TOKEN_LIMIT), TextColor3 = COLORS.text,
-        TextSize = 10, Font = FONT_CODE, ClearTextOnFocus = false, TextTransparency = 0,
-        ZIndex = 51, Parent = settingsPanel,
-    })
-    corner(limitInput, 6)
-    padding(limitInput, 10, 10, 0, 0)
-    stroke(limitInput, COLORS.border, 0.4, 1)
-    limitInput.FocusLost:Connect(function()
-        local n = tonumber(limitInput.Text)
-        if n and n >= 500 and n <= 128000 then
-            CONFIG.TOKEN_LIMIT = n
-        else
-            limitInput.Text = tostring(CONFIG.TOKEN_LIMIT)
-        end
-        updateTokenDisplay()
-    end)
-    registerThemeCallback(function()
-        limitInput.BackgroundColor3 = COLORS.canvas
-        limitInput.TextColor3 = COLORS.text
-    end)
-
-    label(settingsPanel, "自动执行", 9, COLORS.muted, FONT_BOLD, {
-        Position = UDim2.fromOffset(16, 278), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
+    label(settingsPanel, "自动执行 AI 返回的代码", 11, COLORS.text, FONT_SEMI, {
+        Position = UDim2.fromOffset(16, 180), Size = UDim2.fromOffset(250, 20), ZIndex = 601,
     })
     local autoToggle = button(settingsPanel, "", {
-        Position = UDim2.fromOffset(16, 294), Size = UDim2.fromOffset(38, 20),
-        BackgroundColor3 = COLORS.border, ZIndex = 51,
+        Position = UDim2.fromOffset(320, 180), Size = UDim2.fromOffset(40, 22),
+        BackgroundColor3 = COLORS.border, ZIndex = 601,
     })
-    corner(autoToggle, 10)
+    corner(autoToggle, 11)
     local autoKnob = new("Frame", {
         BackgroundColor3 = COLORS.text, BorderSizePixel = 0,
-        Position = UDim2.fromOffset(3, 3), Size = UDim2.fromOffset(14, 14),
-        ZIndex = 52, Parent = autoToggle,
+        Position = UDim2.fromOffset(3, 3), Size = UDim2.fromOffset(16, 16),
+        ZIndex = 602, Parent = autoToggle,
     })
-    corner(autoKnob, 7)
-    label(settingsPanel, "AI 返回代码直接执行", 11, COLORS.text, FONT_SEMI, {
-        Position = UDim2.fromOffset(62, 292), Size = UDim2.fromOffset(200, 20), ZIndex = 51,
-    })
-    autoToggle.MouseButton1Click:Connect(function()
+    corner(autoKnob, 8)
+    bindClick(autoToggle, function()
         CONFIG.AUTO_EXECUTE = not CONFIG.AUTO_EXECUTE
         if CONFIG.AUTO_EXECUTE then
             autoToggle.BackgroundColor3 = COLORS.danger
             autoKnob.Position = UDim2.fromOffset(21, 3)
-            showToast("自动执行已开启")
         else
             autoToggle.BackgroundColor3 = COLORS.border
             autoKnob.Position = UDim2.fromOffset(3, 3)
-            showToast("自动执行已关闭")
-        end
-    end)
-    autoToggle.Activated:Connect(function()
-        CONFIG.AUTO_EXECUTE = not CONFIG.AUTO_EXECUTE
-        if CONFIG.AUTO_EXECUTE then
-            autoToggle.BackgroundColor3 = COLORS.danger
-            autoKnob.Position = UDim2.fromOffset(21, 3)
-            showToast("自动执行已开启")
-        else
-            autoToggle.BackgroundColor3 = COLORS.border
-            autoKnob.Position = UDim2.fromOffset(3, 3)
-            showToast("自动执行已关闭")
         end
     end)
 
-    label(settingsPanel, "单次回复上限", 9, COLORS.muted, FONT_BOLD, {
-        Position = UDim2.fromOffset(200, 278), Size = UDim2.fromOffset(200, 14), ZIndex = 51,
+    -- 主题切换
+    label(settingsPanel, "UI 主题", 9, COLORS.muted, FONT_BOLD, {
+        Position = UDim2.fromOffset(16, 220), Size = UDim2.fromOffset(200, 14), ZIndex = 601,
     })
-    local replyInput = new("TextBox", {
-        Position = UDim2.fromOffset(200, 294), Size = UDim2.new(0, 160, 0, 28),
-        BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
-        Text = tostring(CONFIG.TOKEN_PER_REPLY), TextColor3 = COLORS.text,
-        TextSize = 10, Font = FONT_CODE, ClearTextOnFocus = false, TextTransparency = 0,
-        ZIndex = 51, Parent = settingsPanel,
-    })
-    corner(replyInput, 6)
-    padding(replyInput, 10, 10, 0, 0)
-    stroke(replyInput, COLORS.border, 0.4, 1)
-    replyInput.FocusLost:Connect(function()
-        local n = tonumber(replyInput.Text)
-        if n and n >= 100 and n <= 32000 then
-            CONFIG.TOKEN_PER_REPLY = n
-        else
-            replyInput.Text = tostring(CONFIG.TOKEN_PER_REPLY)
-        end
-    end)
-    registerThemeCallback(function()
-        replyInput.BackgroundColor3 = COLORS.canvas
-        replyInput.TextColor3 = COLORS.text
-    end)
-
-    new("Frame", {
-        BackgroundColor3 = COLORS.border, BackgroundTransparency = 0.5,
-        BorderSizePixel = 0, Position = UDim2.fromOffset(16, 336),
-        Size = UDim2.new(1, -32, 0, 1), ZIndex = 51, Parent = settingsPanel,
-    })
-
-    local copyLastBtn = button(settingsPanel, "📋  复制最近代码", {
-        Position = UDim2.fromOffset(16, 350), Size = UDim2.new(0.48, -8, 0, 32),
-        BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.text,
-        TextSize = 11, ZIndex = 51,
-    })
-    copyLastBtn.MouseButton1Click:Connect(function()
-        if state.lastCode ~= "" and setclipboard then
-            setclipboard(state.lastCode)
-            showToast("已复制最近代码")
-        else
-            showToast("没有可复制的代码")
-        end
-    end)
-    copyLastBtn.Activated:Connect(function()
-        if state.lastCode ~= "" and setclipboard then
-            setclipboard(state.lastCode)
-            showToast("已复制最近代码")
-        else
-            showToast("没有可复制的代码")
-        end
-    end)
-
-    local clearChatBtn = button(settingsPanel, "🗑  清空对话", {
-        Position = UDim2.new(0.52, 0, 0, 350), Size = UDim2.new(0.48, -8, 0, 32),
-        BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.text,
-        TextSize = 11, ZIndex = 51,
-    })
-    clearChatBtn.MouseButton1Click:Connect(function()
-        state.messageCount = 0
-        state.conversationHistory = {}
-        state.totalTokens = 0
-        updateTokenDisplay()
-        for _, child in ipairs(conversation:GetChildren()) do
-            if child:IsA("GuiObject") and child.Name ~= "UIListLayout" then
-                child:Destroy()
+    local themeOrder = {"translucent", "white", "dark"}
+    local themeLabels = {"半透明", "白色", "黑灰"}
+    local themeBtns = {}
+    for i, key in ipairs(themeOrder) do
+        local b = button(settingsPanel, themeLabels[i], {
+            Position = UDim2.fromOffset(16 + (i-1) * 100, 240),
+            Size = UDim2.fromOffset(92, 30),
+            BackgroundColor3 = (CONFIG.THEME == key) and COLORS.accent or COLORS.panelRaised,
+            TextColor3 = (CONFIG.THEME == key) and COLORS.canvas or COLORS.text,
+            TextSize = 11, Font = FONT_BOLD, ZIndex = 601,
+        })
+        bindClick(b, function()
+            if CONFIG.THEME == key then return end
+            CONFIG.THEME = key
+            COLORS = THEMES[key]
+            for j, other in ipairs(themeBtns) do
+                other.BackgroundColor3 = (themeOrder[j] == key) and COLORS.accent or COLORS.panelRaised
+                other.TextColor3 = (themeOrder[j] == key) and COLORS.canvas or COLORS.text
             end
-        end
-        addWelcome()
-        showToast("已清空对话")
-    end)
-    clearChatBtn.Activated:Connect(function()
-        state.messageCount = 0
-        state.conversationHistory = {}
-        state.totalTokens = 0
-        updateTokenDisplay()
-        for _, child in ipairs(conversation:GetChildren()) do
-            if child:IsA("GuiObject") and child.Name ~= "UIListLayout" then
-                child:Destroy()
+            for _, cb in ipairs(themeCallbacks) do
+                pcall(cb)
             end
-        end
-        addWelcome()
-        showToast("已清空对话")
-    end)
-
-    registerThemeCallback(function()
-        shell.BackgroundColor3 = COLORS.shell
-        shell.BackgroundTransparency = COLORS.shellTransparency
-        shellStroke.Color = COLORS.border
-        shellGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, COLORS.shell),
-            ColorSequenceKeypoint.new(1, COLORS.panel),
-        })
-
-        topbar.BackgroundColor3 = COLORS.shell
-        topbar.BackgroundTransparency = COLORS.shellTransparency
-        topbarGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, COLORS.panel),
-            ColorSequenceKeypoint.new(1, COLORS.shell),
-        })
-
-        sidebar.BackgroundColor3 = COLORS.sidebar
-        sidebar.BackgroundTransparency = COLORS.shellTransparency
-        sidebarGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, COLORS.panel),
-            ColorSequenceKeypoint.new(1, COLORS.sidebar),
-        })
-
-        main.BackgroundColor3 = COLORS.canvas
-        main.BackgroundTransparency = COLORS.shellTransparency
-
-        header.BackgroundColor3 = COLORS.canvas
-
-        brandLabel.TextColor3 = COLORS.text
-        brandSub.TextColor3 = COLORS.muted
-        taskTitle.TextColor3 = COLORS.text
-        modelName.TextColor3 = COLORS.text
-        modelBadge.TextColor3 = COLORS.muted
-
-        composer.BackgroundColor3 = COLORS.panel
-        composer.BackgroundTransparency = COLORS.panelTransparency
-        composerStroke.Color = COLORS.border
-
-        tokenLabel.TextColor3 = COLORS.muted
-        hint.TextColor3 = COLORS.muted
-
-        settingsPanel.BackgroundColor3 = COLORS.panel
-        settingsStroke.Color = COLORS.border
-        settingsGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, COLORS.panelRaised),
-            ColorSequenceKeypoint.new(1, COLORS.panel),
-        })
-        settingsTitle.TextColor3 = COLORS.text
-
-        modelMenu.BackgroundColor3 = COLORS.panel
-        modelMenuStroke.Color = COLORS.border
-        modelMenuGradient.Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, COLORS.panelRaised),
-            ColorSequenceKeypoint.new(1, COLORS.panel),
-        })
-
-        toast.BackgroundColor3 = COLORS.panelRaised
-        toast.TextColor3 = COLORS.text
-
-        levelSlider.BackgroundColor3 = COLORS.trackBg
-        levelTrackStroke.Color = COLORS.trackBorder
-        levelKnob.BackgroundColor3 = COLORS.knobColor
-        levelKnobStroke.Color = COLORS.knobBorder
-        levelTitleLabel.TextColor3 = COLORS.muted
-
-        setLevel(currentLevel, false)
-    end)
-
-    local function closeOverlays()
-        state.settingsOpen = false
-        state.modelMenuOpen = false
-        overlay.Visible = false
-        settingsPanel.Visible = false
+            showToast("主题: " .. themeLabels[i], COLORS.accent, "🎨")
+        end)
+        table.insert(themeBtns, b)
     end
 
-    settingsClose.MouseButton1Click:Connect(closeOverlays)
-    settingsClose.Activated:Connect(closeOverlays)
-    settingsButton.Activated:Connect(function()
-        state.settingsOpen = true
-        overlay.Visible = true
-        settingsPanel.Visible = true
-    end)
-    overlay.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            closeOverlays()
-        end
+    bindClick(settingsBtn, function()
+        settingsPanel.Visible = not settingsPanel.Visible
     end)
 
-    local ball = new("TextButton", {
-        Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 20, 0.5, -23),
-        BackgroundColor3 = COLORS.accent, Text = "AI", TextColor3 = COLORS.canvas,
-        TextSize = 13, Font = FONT_BOLD, BorderSizePixel = 0,
-        Visible = false, Active = true, Parent = gui,
-    })
-    corner(ball, 23)
-
-    local ballDragging, ballDragStart, ballStartPos
-    ball.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            ballDragging = true
-            ballDragStart = input.Position
-            ballStartPos = ball.Position
-        end
-    end)
-    ball.InputChanged:Connect(function(input)
-        if ballDragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch) then
-            local delta = input.Position - ballDragStart
-            ball.Position = UDim2.new(
-                ballStartPos.X.Scale, ballStartPos.X.Offset + delta.X,
-                ballStartPos.Y.Scale, ballStartPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            ballDragging = false
-        end
-    end)
-
-    minimizeBtn.MouseButton1Click:Connect(function()
-        backdrop.Visible = false
-        ball.Visible = true
-    end)
-    minimizeBtn.Activated:Connect(function()
-        backdrop.Visible = false
-        ball.Visible = true
-    end)
-    ball.MouseButton1Click:Connect(function()
-        backdrop.Visible = true
-        ball.Visible = false
-    end)
-    ball.Activated:Connect(function()
-        backdrop.Visible = true
-        ball.Visible = false
-    end)
-
-    collapseButton.Activated:Connect(function()
-        state.sidebarCollapsed = not state.sidebarCollapsed
-        local width = state.sidebarCollapsed and 0 or SIDEBAR_W
-        TweenService:Create(sidebar, TweenInfo.new(0.2), {Size = UDim2.new(0, width, 1, 0)}):Play()
-        TweenService:Create(main, TweenInfo.new(0.2), {Position = UDim2.fromOffset(width, 0), Size = UDim2.new(1, -width, 1, 0)}):Play()
-    end)
-
-    workspaceButton.MouseButton1Click:Connect(function() showToast("工作区未接入") end)
-    workspaceButton.Activated:Connect(function() showToast("工作区未接入") end)
-
-    newTaskButton.Activated:Connect(function()
-        state.taskTitle = "新任务"
-        state.messageCount = 0
-        state.conversationHistory = {}
-        state.totalTokens = 0
-        updateTokenDisplay()
-        for _, child in ipairs(conversation:GetChildren()) do
-            if child:IsA("GuiObject") and child.Name ~= "UIListLayout" then
-                child:Destroy()
+    -- 快捷键
+    UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        local isCtrl = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+            or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+        if isCtrl and input.KeyCode == Enum.KeyCode.L then
+            for _, child in ipairs(conversation:GetChildren()) do
+                if child:IsA("GuiObject") and child.Name ~= "UIListLayout" then
+                    child:Destroy()
+                end
             end
+            state.messageCount = 0
+            state.conversationHistory = {}
+            state.totalTokens = 0
+            updateTokenDisplay()
+            showToast("已清空", COLORS.green, "✓")
         end
-        taskTitle.Text = state.taskTitle
-        addWelcome()
-        showToast("新任务")
     end)
 
-    addWelcome()
+    setLevel(currentLevel)
     updateTokenDisplay()
-    setLevel(currentLevel, false)
 end
 
 showKeyGate(function()
     buildInterface()
+end)-- ============================================================
+-- Codex Interface — 完整版（下）
+-- 接在上半部分之后执行
+-- ============================================================
+
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- 找到上半部分创建的 UI
+local gui = playerGui:WaitForChild("CodexInterface", 10)
+if not gui then
+    warn("[Codex] 先跑上半部分")
+    return
+end
+
+local shell
+for _, c in ipairs(gui:GetChildren()) do
+    if c:IsA("Frame") and c:FindFirstChildWhichIsA("Frame") then
+        shell = c
+        break
+    end
+end
+if not shell then
+    warn("[Codex] 找不到主窗口")
+    return
+end
+
+local CONFIG = _G.CodexConfig or {
+    API_URL = "https://api.deepseek.com/chat/completions",
+    API_KEY = "",
+    MODEL = "deepseek-flash",
+    TEMPERATURE = 0.3,
+    MAX_LOOPS = 15,
+    TOKEN_LIMIT_ENABLED = false,
+    TOKEN_LIMIT = 8000,
+    TOKEN_PER_REPLY = 2000,
+    AUTO_EXECUTE = false,
+    THEME = "translucent",
+}
+_G.CodexConfig = CONFIG
+_G.CodexLiveConfig = CONFIG
+
+local FONT_REGULAR = Enum.Font.SourceSans
+local FONT_BOLD = Enum.Font.SourceSansBold
+local FONT_SEMI = Enum.Font.SourceSansSemibold
+local FONT_CODE = Enum.Font.Code
+
+local COLORS = {
+    canvas      = Color3.fromRGB(9, 11, 17),
+    shell       = Color3.fromRGB(18, 21, 31),
+    sidebar     = Color3.fromRGB(14, 17, 26),
+    panel       = Color3.fromRGB(24, 28, 41),
+    panelRaised = Color3.fromRGB(33, 38, 55),
+    border      = Color3.fromRGB(64, 72, 96),
+    muted       = Color3.fromRGB(151, 161, 184),
+    text        = Color3.fromRGB(241, 244, 252),
+    accent      = Color3.fromRGB(122, 150, 255),
+    accentBright= Color3.fromRGB(169, 188, 255),
+    green       = Color3.fromRGB(108, 211, 157),
+    orange      = Color3.fromRGB(255, 180, 102),
+    danger      = Color3.fromRGB(255, 113, 113),
+    purple      = Color3.fromRGB(180, 130, 255),
+    purpleHi    = Color3.fromRGB(220, 170, 255),
+}
+
+local function new(c, p)
+    local o = Instance.new(c)
+    if p then for k, v in pairs(p) do o[k] = v end end
+    return o
+end
+
+local function corner(p, r)
+    return new("UICorner", {CornerRadius = UDim.new(0, r), Parent = p})
+end
+
+local function stroke(p, color, trans, thick)
+    return new("UIStroke", {
+        Color = color, Transparency = trans or 0, Thickness = thick or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = p,
+    })
+end
+
+local function padding(p, l, r, t, b)
+    return new("UIPadding", {
+        PaddingLeft = UDim.new(0, l), PaddingRight = UDim.new(0, r),
+        PaddingTop = UDim.new(0, t), PaddingBottom = UDim.new(0, b),
+        Parent = p,
+    })
+end
+
+local function label(p, text, size, color, font, props)
+    local l = new("TextLabel", {
+        BackgroundTransparency = 1, Text = text, TextColor3 = color,
+        TextSize = size, Font = font or FONT_REGULAR,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+        TextTransparency = 0, Parent = p,
+    })
+    if props then for k, v in pairs(props) do l[k] = v end end
+    return l
+end
+
+local function button(p, text, props)
+    local b = new("TextButton", {
+        BackgroundColor3 = COLORS.panel, BorderSizePixel = 0,
+        Text = text, TextColor3 = COLORS.text, TextSize = 13,
+        Font = FONT_SEMI, AutoButtonColor = false,
+        TextTransparency = 0, Parent = p,
+    })
+    corner(b, 8)
+    stroke(b, COLORS.border, 0.68, 1)
+    if props then for k, v in pairs(props) do b[k] = v end end
+    return b
+end
+
+local function bindClick(btn, fn)
+    btn.MouseButton1Click:Connect(fn)
+    btn.Activated:Connect(fn)
+end
+
+-- Toast（若上半部分没有就创建一个）
+local toastHolder = gui:FindFirstChild("CodexToast")
+if not toastHolder then
+    toastHolder = new("Frame", {
+        Name = "CodexToast", Visible = false,
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(0.5, 0, 0, -60),
+        Size = UDim2.fromOffset(0, 40),
+        AutomaticSize = Enum.AutomaticSize.X,
+        BackgroundColor3 = COLORS.panel,
+        BackgroundTransparency = 0.05,
+        BorderSizePixel = 0, ZIndex = 900, Parent = gui,
+    })
+    corner(toastHolder, 10)
+    stroke(toastHolder, COLORS.border, 0.15, 1)
+    padding(toastHolder, 14, 18, 0, 0)
+    new("Frame", {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 0, 0.5, 0),
+        Size = UDim2.fromOffset(3, 22),
+        BackgroundColor3 = COLORS.accent,
+        BorderSizePixel = 0, ZIndex = 901, Parent = toastHolder,
+    })
+    label(toastHolder, "•", 16, COLORS.accent, FONT_BOLD, {
+        Position = UDim2.fromOffset(12, 0), Size = UDim2.fromOffset(20, 40), ZIndex = 901,
+    })
+    label(toastHolder, "", 12, COLORS.text, FONT_SEMI, {
+        Position = UDim2.fromOffset(34, 0),
+        Size = UDim2.new(0, 0, 1, 0),
+        AutomaticSize = Enum.AutomaticSize.X, ZIndex = 901,
+    })
+end
+
+local toastBar = toastHolder:FindFirstChildWhichIsA("Frame")
+local toastText
+for _, c in ipairs(toastHolder:GetChildren()) do
+    if c:IsA("TextLabel") and c.TextSize == 12 then toastText = c end
+end
+
+local toastConn
+local function showToast(msg, color, icon)
+    color = color or COLORS.accent
+    if toastConn then toastConn:Disconnect() end
+    if not toastText then return end
+    toastHolder.Visible = true
+    toastHolder.Position = UDim2.new(0.5, 0, 0, -60)
+    toastHolder.BackgroundTransparency = 0.05
+    if toastBar then toastBar.BackgroundColor3 = color end
+    toastText.Text = msg
+    toastText.TextTransparency = 0
+    TweenService:Create(toastHolder, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, 0, 0, 20),
+    }):Play()
+    toastConn = task.delay(2.6, function()
+        TweenService:Create(toastHolder, TweenInfo.new(0.25), {
+            Position = UDim2.new(0.5, 0, 0, -60), BackgroundTransparency = 1,
+        }):Play()
+        TweenService:Create(toastText, TweenInfo.new(0.2), {TextTransparency = 1}):Play()
+        task.wait(0.3)
+        toastHolder.Visible = false
+    end)
+end
+
+-- 找对话区、输入框
+local conversation, promptBox
+for _, d in ipairs(shell:GetDescendants()) do
+    if d:IsA("ScrollingFrame") and d.Name ~= "CodexHistory" and d.Name ~= "CodexWorkspace" then
+        if not conversation or d.AbsoluteSize.Y > conversation.AbsoluteSize.Y then
+            conversation = d
+        end
+    end
+    if d:IsA("TextBox") and d.PlaceholderText:find("Codex") then
+        promptBox = d
+    end
+end
+
+-- ============================================================
+-- 右侧扩展工具条
+-- ============================================================
+local bar = new("Frame", {
+    Name = "CodexExtBar",
+    AnchorPoint = Vector2.new(1, 0.5),
+    Position = UDim2.new(1, 60, 0.5, 0),
+    Size = UDim2.fromOffset(46, 460),
+    BackgroundColor3 = COLORS.panel,
+    BackgroundTransparency = 0.08,
+    BorderSizePixel = 0, Active = true,
+    ZIndex = 30, Parent = shell,
+})
+corner(bar, 23)
+stroke(bar, COLORS.border, 0.35, 1)
+new("UIListLayout", {
+    Padding = UDim.new(0, 5),
+    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+    VerticalAlignment = Enum.VerticalAlignment.Center,
+    SortOrder = Enum.SortOrder.LayoutOrder, Parent = bar,
+})
+TweenService:Create(bar, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+    Position = UDim2.new(1, -12, 0.5, 0),
+}):Play()
+
+local toolButtons = {}
+local function makeToolButton(icon, tip, callback, order)
+    local btn = new("TextButton", {
+        Size = UDim2.fromOffset(36, 36),
+        BackgroundColor3 = COLORS.panelRaised,
+        BackgroundTransparency = 0.25,
+        BorderSizePixel = 0, Text = icon,
+        TextColor3 = COLORS.text, TextSize = 17,
+        Font = FONT_BOLD, AutoButtonColor = false,
+        LayoutOrder = order, ZIndex = 31, Parent = bar,
+    })
+    corner(btn, 18)
+    local s = stroke(btn, COLORS.border, 0.5, 1)
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.15), {
+            BackgroundTransparency = 0, BackgroundColor3 = COLORS.accent,
+            TextColor3 = Color3.fromRGB(255, 255, 255),
+            Size = UDim2.fromOffset(40, 40),
+        }):Play()
+        TweenService:Create(s, TweenInfo.new(0.15), {Color = COLORS.accentBright, Transparency = 0.2}):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.15), {
+            BackgroundTransparency = 0.25, BackgroundColor3 = COLORS.panelRaised,
+            TextColor3 = COLORS.text, Size = UDim2.fromOffset(36, 36),
+        }):Play()
+        TweenService:Create(s, TweenInfo.new(0.15), {Color = COLORS.border, Transparency = 0.5}):Play()
+    end)
+    bindClick(btn, callback)
+    table.insert(toolButtons, btn)
+    return btn
+end
+
+local extDrag = { active = false, start = nil, origin = nil }
+bar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        extDrag.active = true
+        extDrag.start = input.Position
+        extDrag.origin = bar.Position
+    end
 end)
+bar.InputChanged:Connect(function(input)
+    if extDrag.active and (input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - extDrag.start
+        bar.Position = UDim2.new(
+            extDrag.origin.X.Scale, extDrag.origin.X.Offset + delta.X,
+            extDrag.origin.Y.Scale, extDrag.origin.Y.Offset + delta.Y
+        )
+    end
+end)
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        extDrag.active = false
+    end
+end)
+
+-- ============================================================
+-- 命令历史
+-- ============================================================
+local commandHistory = {}
+local function pushCommand(text)
+    table.insert(commandHistory, 1, { text = text, time = os.time() })
+    if #commandHistory > 50 then table.remove(commandHistory, 51) end
+end
+
+local historyPanel = new("Frame", {
+    Name = "CodexHistory", Visible = false,
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(340, 400),
+    BackgroundColor3 = COLORS.panel,
+    BorderSizePixel = 0, ZIndex = 600, Parent = gui,
+})
+corner(historyPanel, 12)
+stroke(historyPanel, COLORS.border, 0.15, 1)
+label(historyPanel, "命令历史", 14, COLORS.text, FONT_BOLD, {
+    Position = UDim2.fromOffset(16, 14), Size = UDim2.fromOffset(200, 22), ZIndex = 601,
+})
+local histCount = label(historyPanel, "0 条", 10, COLORS.muted, FONT_REGULAR, {
+    AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -50, 0, 18),
+    Size = UDim2.fromOffset(50, 16),
+    TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 601,
+})
+local histClose = button(historyPanel, "×", {
+    AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 10),
+    Size = UDim2.fromOffset(28, 28),
+    BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.muted,
+    TextSize = 16, ZIndex = 601,
+})
+bindClick(histClose, function() historyPanel.Visible = false end)
+
+local histScroll = new("ScrollingFrame", {
+    Position = UDim2.fromOffset(10, 44),
+    Size = UDim2.new(1, -20, 1, -54),
+    BackgroundTransparency = 1, BorderSizePixel = 0,
+    CanvasSize = UDim2.new(),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ScrollBarThickness = 4, ScrollBarImageColor3 = COLORS.border,
+    ZIndex = 601, Parent = historyPanel,
+})
+new("UIListLayout", {Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = histScroll})
+
+local function refreshHistory()
+    for _, c in ipairs(histScroll:GetChildren()) do
+        if not c:IsA("UIListLayout") then c:Destroy() end
+    end
+    histCount.Text = #commandHistory .. " 条"
+    if #commandHistory == 0 then
+        label(histScroll, "还没有历史记录", 11, COLORS.muted, FONT_REGULAR, {
+            Size = UDim2.new(1, 0, 0, 30),
+            TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 602,
+        })
+        return
+    end
+    for i, item in ipairs(commandHistory) do
+        local row = button(histScroll, "", {
+            Size = UDim2.new(1, -6, 0, 44),
+            BackgroundColor3 = COLORS.panelRaised,
+            BackgroundTransparency = 0.35,
+            Text = "", TextXAlignment = Enum.TextXAlignment.Left,
+            LayoutOrder = i, ZIndex = 602,
+        })
+        label(row, item.text:sub(1, 40) .. (#item.text > 40 and "..." or ""), 11, COLORS.text, FONT_REGULAR, {
+            Position = UDim2.fromOffset(10, 6), Size = UDim2.new(1, -60, 0, 18), ZIndex = 603,
+        })
+        label(row, os.date("%H:%M:%S", item.time), 9, COLORS.muted, FONT_CODE, {
+            AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 7),
+            Size = UDim2.fromOffset(50, 14),
+            TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 603,
+        })
+        bindClick(row, function()
+            if promptBox then
+                promptBox.Text = item.text
+                promptBox:CaptureFocus()
+            end
+            historyPanel.Visible = false
+        end)
+    end
+end
+
+-- ============================================================
+-- 运行统计
+-- ============================================================
+local statsPanel = new("Frame", {
+    Name = "CodexStats", Visible = false,
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(280, 280),
+    BackgroundColor3 = COLORS.panel,
+    BorderSizePixel = 0, ZIndex = 600, Parent = gui,
+})
+corner(statsPanel, 12)
+stroke(statsPanel, COLORS.border, 0.15, 1)
+label(statsPanel, "运行统计", 14, COLORS.text, FONT_BOLD, {
+    Position = UDim2.fromOffset(16, 14), Size = UDim2.fromOffset(200, 22), ZIndex = 601,
+})
+local statsClose = button(statsPanel, "×", {
+    AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 10),
+    Size = UDim2.fromOffset(28, 28),
+    BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.muted,
+    TextSize = 16, ZIndex = 601,
+})
+bindClick(statsClose, function() statsPanel.Visible = false end)
+
+local statsRows = {}
+local statStart = tick()
+local statDefs = {
+    {name = "消息数", key = "messages", color = COLORS.accent},
+    {name = "工具调用", key = "tools", color = COLORS.green},
+    {name = "Token", key = "tokens", color = COLORS.orange},
+    {name = "上限", key = "limit", color = COLORS.purple},
+    {name = "运行时长", key = "uptime", color = COLORS.accentBright},
+}
+for i, def in ipairs(statDefs) do
+    local y = 50 + (i-1) * 32
+    local dot = new("Frame", {
+        Position = UDim2.fromOffset(16, y + 8),
+        Size = UDim2.fromOffset(6, 6),
+        BackgroundColor3 = def.color,
+        BorderSizePixel = 0, ZIndex = 601, Parent = statsPanel,
+    })
+    corner(dot, 3)
+    label(statsPanel, def.name, 11, COLORS.muted, FONT_REGULAR, {
+        Position = UDim2.fromOffset(30, y), Size = UDim2.fromOffset(100, 20), ZIndex = 601,
+    })
+    statsRows[def.key] = label(statsPanel, "—", 12, COLORS.text, FONT_SEMI, {
+        AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, y),
+        Size = UDim2.fromOffset(140, 20),
+        TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 601,
+    })
+end
+
+local function findTokenLabel()
+    for _, d in ipairs(shell:GetDescendants()) do
+        if d:IsA("TextLabel") and d.Text:find("tokens:") then
+            return d
+        end
+    end
+    return nil
+end
+
+task.spawn(function()
+    while gui.Parent do
+        local msgCount = 0
+        if conversation then
+            for _, c in ipairs(conversation:GetChildren()) do
+                if c:IsA("Frame") and c.Name ~= "UIListLayout" then
+                    msgCount += 1
+                end
+            end
+        end
+        statsRows.messages.Text = tostring(msgCount)
+        statsRows.tools.Text = tostring(_G.CodexPlugin and _G.CodexPlugin.stats and _G.CodexPlugin.stats.tools or 0)
+
+        local tl = findTokenLabel()
+        if tl then
+            local used = tl.Text:match("tokens:%s*(%d+)")
+            statsRows.tokens.Text = used or "0"
+        end
+        statsRows.limit.Text = CONFIG.TOKEN_LIMIT_ENABLED and tostring(CONFIG.TOKEN_LIMIT) or "无限制"
+        statsRows.uptime.Text = string.format("%.0fs", tick() - statStart)
+        task.wait(0.5)
+    end
+end)
+
+-- ============================================================
+-- API 配置弹窗
+-- ============================================================
+local apiPanel = new("Frame", {
+    Name = "CodexApiPanel", Visible = false,
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(440, 400),
+    BackgroundColor3 = COLORS.panel,
+    BorderSizePixel = 0, ZIndex = 650, Parent = gui,
+})
+corner(apiPanel, 12)
+stroke(apiPanel, COLORS.border, 0.15, 1)
+label(apiPanel, "API 配置", 15, COLORS.text, FONT_BOLD, {
+    Position = UDim2.fromOffset(20, 18), Size = UDim2.new(1, -60, 0, 24), ZIndex = 651,
+})
+label(apiPanel, "改完保存，下一次对话立即生效", 10, COLORS.muted, FONT_REGULAR, {
+    Position = UDim2.fromOffset(20, 42), Size = UDim2.new(1, -60, 0, 16), ZIndex = 651,
+})
+local apiClose = button(apiPanel, "×", {
+    AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 14),
+    Size = UDim2.fromOffset(28, 28),
+    BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.muted,
+    TextSize = 16, ZIndex = 651,
+})
+bindClick(apiClose, function() apiPanel.Visible = false end)
+
+local function makeApiInput(y, labelText, placeholder, value)
+    label(apiPanel, labelText, 10, COLORS.muted, FONT_BOLD, {
+        Position = UDim2.fromOffset(20, y), Size = UDim2.new(1, -40, 0, 16), ZIndex = 651,
+    })
+    local box = new("TextBox", {
+        Position = UDim2.fromOffset(20, y + 18),
+        Size = UDim2.new(1, -40, 0, 38),
+        BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
+        Text = value or "", PlaceholderText = placeholder,
+        PlaceholderColor3 = COLORS.muted,
+        TextColor3 = COLORS.text, TextSize = 11, Font = FONT_CODE,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false, ZIndex = 651, Parent = apiPanel,
+    })
+    corner(box, 8)
+    padding(box, 10, 10, 0, 0)
+    stroke(box, COLORS.border, 0.4, 1)
+    return box
+end
+
+local modelIn = makeApiInput(70, "模型", "deepseek-flash", CONFIG.MODEL)
+local keyIn = makeApiInput(144, "API KEY", "sk-...", CONFIG.API_KEY)
+local urlIn = makeApiInput(218, "API 地址", "https://api.deepseek.com/chat/completions", CONFIG.API_URL)
+
+local apiSave = button(apiPanel, "保存并应用", {
+    Position = UDim2.fromOffset(20, 300),
+    Size = UDim2.new(1, -40, 0, 44),
+    BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
+    TextSize = 14, Font = FONT_BOLD, ZIndex = 651,
+})
+bindClick(apiSave, function()
+    CONFIG.MODEL = modelIn.Text
+    CONFIG.API_KEY = keyIn.Text
+    CONFIG.API_URL = urlIn.Text
+    showToast("配置已保存", COLORS.green, "✓")
+    apiPanel.Visible = false
+end)
+
+-- ============================================================
+-- 工作区
+-- ============================================================
+local savedScripts = {
+    { name = "改速度示例", code = "local c = game.Players.LocalPlayer.Character\nif c then c:FindFirstChildOfClass('Humanoid').WalkSpeed = 100 end" },
+}
+local wsPanel = new("Frame", {
+    Name = "CodexWorkspace", Visible = false,
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5),
+    Size = UDim2.fromOffset(560, 440),
+    BackgroundColor3 = COLORS.panel,
+    BorderSizePixel = 0, ZIndex = 650, Parent = gui,
+})
+corner(wsPanel, 12)
+stroke(wsPanel, COLORS.border, 0.15, 1)
+label(wsPanel, "工作区", 15, COLORS.text, FONT_BOLD, {
+    Position = UDim2.fromOffset(20, 16), Size = UDim2.fromOffset(200, 24), ZIndex = 651,
+})
+local wsClose = button(wsPanel, "×", {
+    AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 14),
+    Size = UDim2.fromOffset(28, 28),
+    BackgroundColor3 = COLORS.panelRaised, TextColor3 = COLORS.muted,
+    TextSize = 16, ZIndex = 651,
+})
+bindClick(wsClose, function() wsPanel.Visible = false end)
+
+local tabs = {"资源树", "收藏夹", "文件浏览"}
+local tabButtons, tabContents = {}, {}
+for i, name in ipairs(tabs) do
+    local tb = button(wsPanel, name, {
+        Position = UDim2.fromOffset(20 + (i-1) * 112, 54),
+        Size = UDim2.fromOffset(104, 32),
+        BackgroundColor3 = (i == 1) and COLORS.accent or COLORS.panelRaised,
+        TextColor3 = (i == 1) and COLORS.canvas or COLORS.text,
+        TextSize = 12, Font = FONT_BOLD, ZIndex = 651,
+    })
+    local content = new("Frame", {
+        Position = UDim2.fromOffset(20, 96),
+        Size = UDim2.new(1, -40, 1, -116),
+        BackgroundTransparency = 1, Visible = (i == 1),
+        ZIndex = 651, Parent = wsPanel,
+    })
+    tabButtons[i] = tb
+    tabContents[i] = content
+    bindClick(tb, function()
+        for j = 1, #tabs do
+            tabButtons[j].BackgroundColor3 = (j == i) and COLORS.accent or COLORS.panelRaised
+            tabButtons[j].TextColor3 = (j == i) and COLORS.canvas or COLORS.text
+            tabContents[j].Visible = (j == i)
+        end
+    end)
+end
+
+-- Tab1 资源树
+local treeScroll = new("ScrollingFrame", {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
+    CanvasSize = UDim2.new(),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ScrollBarThickness = 5, ScrollBarImageColor3 = COLORS.border,
+    ZIndex = 652, Parent = tabContents[1],
+})
+corner(treeScroll, 8)
+stroke(treeScroll, COLORS.border, 0.4, 1)
+padding(treeScroll, 8, 8, 8, 8)
+new("UIListLayout", {Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = treeScroll})
+
+local expanded = {}
+local treeOrder = 0
+local function refreshTree()
+    for _, c in ipairs(treeScroll:GetChildren()) do
+        if not c:IsA("UIListLayout") and not c:IsA("UIPadding") then c:Destroy() end
+    end
+    treeOrder = 0
+    local function walk(inst, depth)
+        if depth > 6 then return end
+        treeOrder += 1
+        local hasChild = #inst:GetChildren() > 0
+        local arrow = hasChild and (expanded[inst] and "▼" or "▶") or "•"
+        local row = button(treeScroll, "", {
+            Size = UDim2.new(1, -6, 0, 26),
+            BackgroundColor3 = COLORS.panelRaised,
+            BackgroundTransparency = 0.5,
+            Text = "", TextXAlignment = Enum.TextXAlignment.Left,
+            LayoutOrder = treeOrder, ZIndex = 653,
+        })
+        label(row, arrow, 10, COLORS.muted, FONT_REGULAR, {
+            Position = UDim2.fromOffset(6, 0), Size = UDim2.fromOffset(16, 26), ZIndex = 654,
+        })
+        label(row, inst.Name, 11, COLORS.text, FONT_REGULAR, {
+            Position = UDim2.fromOffset(24, 0), Size = UDim2.new(1, -80, 0, 26), ZIndex = 654,
+        })
+        label(row, inst.ClassName, 9, COLORS.muted, FONT_CODE, {
+            AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -6, 0, 0),
+            Size = UDim2.fromOffset(120, 26),
+            TextXAlignment = Enum.TextXAlignment.Right, ZIndex = 654,
+        })
+        bindClick(row, function()
+            if hasChild then
+                expanded[inst] = not expanded[inst]
+                refreshTree()
+            end
+        end)
+        if expanded[inst] then
+            for _, c in ipairs(inst:GetChildren()) do
+                walk(c, depth + 1)
+            end
+        end
+    end
+    expanded[game] = true
+    walk(game, 0)
+end
+
+-- Tab2 收藏夹
+local favFrame = tabContents[2]
+local addFav = button(favFrame, "+ 保存当前输入框内容", {
+    Size = UDim2.new(1, 0, 0, 38),
+    BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
+    TextSize = 12, Font = FONT_BOLD, ZIndex = 652,
+})
+local favScroll = new("ScrollingFrame", {
+    Position = UDim2.fromOffset(0, 46),
+    Size = UDim2.new(1, 0, 1, -46),
+    BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
+    CanvasSize = UDim2.new(),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ScrollBarThickness = 5, ScrollBarImageColor3 = COLORS.border,
+    ZIndex = 652, Parent = favFrame,
+})
+corner(favScroll, 8)
+stroke(favScroll, COLORS.border, 0.4, 1)
+padding(favScroll, 8, 8, 8, 8)
+new("UIListLayout", {Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder, Parent = favScroll})
+
+local function refreshFav()
+    for _, c in ipairs(favScroll:GetChildren()) do
+        if not c:IsA("UIListLayout") and not c:IsA("UIPadding") then c:Destroy() end
+    end
+    for i, item in ipairs(savedScripts) do
+        local row = new("Frame", {
+            Size = UDim2.new(1, -6, 0, 60),
+            BackgroundColor3 = COLORS.panelRaised,
+            BackgroundTransparency = 0.35,
+            BorderSizePixel = 0, LayoutOrder = i,
+            ZIndex = 653, Parent = favScroll,
+        })
+        corner(row, 6)
+        label(row, item.name, 12, COLORS.text, FONT_SEMI, {
+            Position = UDim2.fromOffset(10, 8), Size = UDim2.new(1, -100, 0, 18), ZIndex = 654,
+        })
+        label(row, item.code:sub(1, 50):gsub("\n", " "), 10, COLORS.muted, FONT_CODE, {
+            Position = UDim2.fromOffset(10, 30), Size = UDim2.new(1, -20, 0, 18), ZIndex = 654,
+        })
+        local fb = button(row, "填入", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -54, 0.5, 0),
+            Size = UDim2.fromOffset(50, 30),
+            BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
+            TextSize = 10, ZIndex = 654,
+        })
+        bindClick(fb, function()
+            if promptBox then
+                promptBox.Text = item.code
+                promptBox:CaptureFocus()
+            end
+            wsPanel.Visible = false
+        end)
+        local db = button(row, "✕", {
+            AnchorPoint = Vector2.new(1, 0.5),
+            Position = UDim2.new(1, -8, 0.5, 0),
+            Size = UDim2.fromOffset(36, 30),
+            BackgroundColor3 = COLORS.danger, TextColor3 = COLORS.canvas,
+            TextSize = 12, ZIndex = 654,
+        })
+        bindClick(db, function()
+            table.remove(savedScripts, i)
+            refreshFav()
+        end)
+    end
+end
+bindClick(addFav, function()
+    if promptBox and promptBox.Text ~= "" then
+        table.insert(savedScripts, 1, {
+            name = "脚本 " .. os.date("%H:%M"),
+            code = promptBox.Text,
+        })
+        refreshFav()
+        showToast("已保存", COLORS.green, "✓")
+    end
+end)
+
+-- Tab3 文件浏览
+local fileFrame = tabContents[3]
+local pathRow = new("Frame", {
+    Size = UDim2.new(1, 0, 0, 40),
+    BackgroundTransparency = 1, ZIndex = 652, Parent = fileFrame,
+})
+local pathInput = new("TextBox", {
+    Size = UDim2.new(1, -92, 1, 0),
+    BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
+    Text = ".", PlaceholderText = "路径",
+    PlaceholderColor3 = COLORS.muted,
+    TextColor3 = COLORS.text, TextSize = 11, Font = FONT_CODE,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ClearTextOnFocus = false, ZIndex = 652, Parent = pathRow,
+})
+corner(pathInput, 6)
+padding(pathInput, 8, 8, 0, 0)
+stroke(pathInput, COLORS.border, 0.4, 1)
+local goBtn = button(pathRow, "浏览", {
+    AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0),
+    Size = UDim2.fromOffset(84, 40),
+    BackgroundColor3 = COLORS.accent, TextColor3 = COLORS.canvas,
+    TextSize = 12, ZIndex = 652,
+})
+local fileScroll = new("ScrollingFrame", {
+    Position = UDim2.fromOffset(0, 48),
+    Size = UDim2.new(1, 0, 1, -48),
+    BackgroundColor3 = COLORS.canvas, BorderSizePixel = 0,
+    CanvasSize = UDim2.new(),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ScrollBarThickness = 5, ScrollBarImageColor3 = COLORS.border,
+    ZIndex = 652, Parent = fileFrame,
+})
+corner(fileScroll, 8)
+stroke(fileScroll, COLORS.border, 0.4, 1)
+padding(fileScroll, 8, 8, 8, 8)
+new("UIListLayout", {Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder, Parent = fileScroll})
+
+local function refreshFiles()
+    for _, c in ipairs(fileScroll:GetChildren()) do
+        if not c:IsA("UIListLayout") and not c:IsA("UIPadding") then c:Destroy() end
+    end
+    if not listfiles then
+        label(fileScroll, "当前执行器不支持 listfiles", 11, COLORS.danger, FONT_REGULAR, {
+            Size = UDim2.new(1, 0, 0, 30), ZIndex = 653,
+        })
+        return
+    end
+    local ok, files = pcall(listfiles, pathInput.Text)
+    if not ok then
+        label(fileScroll, "读取失败", 11, COLORS.danger, FONT_REGULAR, {
+            Size = UDim2.new(1, 0, 0, 30), ZIndex = 653,
+        })
+        return
+    end
+    for i, f in ipairs(files) do
+        local isDir = false
+        if isfolder then
+            local okf, isf = pcall(isfolder, f)
+            isDir = okf and isf
+        end
+        local row = button(fileScroll, "", {
+            Size = UDim2.new(1, -6, 0, 30),
+            BackgroundColor3 = COLORS.panelRaised,
+            BackgroundTransparency = 0.5,
+            Text = "", TextXAlignment = Enum.TextXAlignment.Left,
+            LayoutOrder = i, ZIndex = 653,
+        })
+        label(row, isDir and "📁" or "📄", 12, COLORS.text, FONT_REGULAR, {
+            Position = UDim2.fromOffset(6, 0), Size = UDim2.fromOffset(22, 30), ZIndex = 654,
+        })
+        label(row, f:sub(-60), 11, COLORS.text, FONT_REGULAR, {
+            Position = UDim2.fromOffset(30, 0), Size = UDim2.new(1, -40, 0, 30), ZIndex = 654,
+        })
+        bindClick(row, function()
+            if isDir then
+                pathInput.Text = f
+                refreshFiles()
+            else
+                if readfile then
+                    local ok2, content = pcall(readfile, f)
+                    if ok2 and promptBox then
+                        promptBox.Text = content:sub(1, 2000)
+                        promptBox:CaptureFocus()
+                        wsPanel.Visible = false
+                    end
+                end
+            end
+        end)
+    end
+end
+bindClick(goBtn, refreshFiles)
+
+-- ============================================================
+-- AI 感知
+-- ============================================================
+_G.CodexPlugin = {
+    version = "3.0",
+    features = {
+        "命令历史",
+        "运行统计",
+        "API 配置",
+        "工作区（资源树/收藏夹/文件）",
+        "复制全部对话",
+        "快速清空",
+    },
+    stats = {
+        messages = 0, tools = 0,
+        tokens = "0", limit = "∞", uptime = "0s",
+    },
+}
+function _G.CodexPlugin.getSummary()
+    local s = _G.CodexPlugin.stats
+    return string.format("插件 v%s | 消息:%d 工具:%d token:%s/%s 运行:%s",
+        _G.CodexPlugin.version, s.messages, s.tools, s.tokens, s.limit, s.uptime)
+end
+
+task.spawn(function()
+    while gui.Parent do
+        local msgCount = 0
+        if conversation then
+            for _, c in ipairs(conversation:GetChildren()) do
+                if c:IsA("Frame") and c.Name ~= "UIListLayout" then msgCount += 1 end
+            end
+        end
+        _G.CodexPlugin.stats.messages = msgCount
+        _G.CodexPlugin.stats.uptime = string.format("%.0fs", tick() - statStart)
+        task.wait(0.5)
+    end
+end)
+
+-- ============================================================
+-- 工具条按钮
+-- ============================================================
+makeToolButton("⏱", "命令历史", function()
+    refreshHistory()
+    historyPanel.Visible = not historyPanel.Visible
+    statsPanel.Visible = false
+    apiPanel.Visible = false
+    wsPanel.Visible = false
+end, 1)
+
+makeToolButton("📊", "运行统计", function()
+    statsPanel.Visible = not statsPanel.Visible
+    historyPanel.Visible = false
+    apiPanel.Visible = false
+    wsPanel.Visible = false
+end, 2)
+
+makeToolButton("🔑", "API 配置", function()
+    apiPanel.Visible = not apiPanel.Visible
+    historyPanel.Visible = false
+    statsPanel.Visible = false
+    wsPanel.Visible = false
+end, 3)
+
+makeToolButton("🗂", "工作区", function()
+    refreshTree()
+    refreshFav()
+    refreshFiles()
+    wsPanel.Visible = not wsPanel.Visible
+    historyPanel.Visible = false
+    statsPanel.Visible = false
+    apiPanel.Visible = false
+end, 4)
+
+makeToolButton("📋", "复制全部对话", function()
+    if not conversation then return end
+    local texts = {}
+    for _, row in ipairs(conversation:GetChildren()) do
+        if row:IsA("Frame") then
+            for _, sub in ipairs(row:GetDescendants()) do
+                if sub:IsA("TextLabel") and sub.Text ~= "" then
+                    table.insert(texts, sub.Text)
+                end
+            end
+        end
+    end
+    if setclipboard then
+        setclipboard(table.concat(texts, "\n---\n"))
+        showToast("已复制 " .. #texts .. " 条", COLORS.green, "✓")
+    end
+end, 5)
+
+makeToolButton("🗑", "快速清空", function()
+    if conversation then
+        for _, c in ipairs(conversation:GetChildren()) do
+            if c:IsA("GuiObject") and c.Name ~= "UIListLayout" then
+                c:Destroy()
+            end
+        end
+    end
+    commandHistory = {}
+    refreshHistory()
+    showToast("已清空", COLORS.green, "✓")
+end, 6)
+
+makeToolButton("🎨", "切换主题", function()
+    local themes = {"translucent", "white", "dark"}
+    local names = {"半透明", "白色", "黑灰"}
+    local idx = 1
+    for i, k in ipairs(themes) do
+        if k == CONFIG.THEME then idx = i break end
+    end
+    idx = idx % #themes + 1
+    CONFIG.THEME = themes[idx]
+    showToast("主题: " .. names[idx], COLORS.accent, "🎨")
+end, 7)
+
+makeToolButton("?", "快捷键帮助", function()
+    showToast("Ctrl+L 清空对话", COLORS.accentBright, "?")
+end, 8)
+
+-- 命令历史挂钩
+if promptBox then
+    local origFocusLost
+    promptBox.FocusLost:Connect(function(enter)
+        if enter and promptBox.Text ~= "" then
+            pushCommand(promptBox.Text)
+            refreshHistory()
+        end
+    end)
+end
+
+-- 快捷键
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    local isCtrl = UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)
+        or UserInputService:IsKeyDown(Enum.KeyCode.RightControl)
+    if isCtrl and input.KeyCode == Enum.KeyCode.H then
+        refreshHistory()
+        historyPanel.Visible = not historyPanel.Visible
+    elseif isCtrl and input.KeyCode == Enum.KeyCode.W then
+        refreshTree()
+        wsPanel.Visible = not wsPanel.Visible
+    end
+end)
+
+showToast("完整版已就绪", COLORS.green, "✓")
+print("[Codex] 全部加载完成。")
